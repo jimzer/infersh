@@ -1,0 +1,29 @@
+{
+	"name": "infersh",
+	"module": "src/main.ts",
+	"type": "module",
+	"private": true,
+	"bin": {
+		"infer": "src/main.ts"
+	},
+	"scripts": {
+		"start": "bun run src/main.ts",
+		"lint": "biome check --fix --unsafe",
+		"typecheck": "tsc --noEmit",
+		"checkall": "bun run lint && bun run typecheck"
+	},
+	"devDependencies": {
+		"@types/bun": "latest"
+	},
+	"peerDependencies": {
+		"typescript": "^5"
+	},
+	"dependencies": {
+		"@biomejs/biome": "^2.4.7",
+		"@effect/platform-bun": "^4.0.0-beta.33",
+		"@fal-ai/client": "^1.9.4",
+		"@readme/openapi-parser": "^6.0.0",
+		"effect": "^4.0.0-beta.33",
+		"openapi3-ts": "^4.5.0"
+	}
+}
