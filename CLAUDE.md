@@ -1,1 +1,1 @@
-Clone locally in /tmp https://github.com/Effect-TS/effect-smol which is effect v4 beta that we use to explore the best apis when building with effect
+Clone locally in /tmp Effect v4 beta that we use to explore the best apis when building with effect, always try to leverage the most the feature of Effect to elegantly fulfill requirements.
