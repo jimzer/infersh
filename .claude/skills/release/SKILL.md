@@ -117,17 +117,23 @@ If everything still holds, say so in one line and move on.
 
 ## 6. Compute the version
 
-The project is pre-1.0, where the leading zero absorbs breakage:
+**This project stays on `0.x` permanently and never releases a 1.0.** The
+leading zero is not a phase to grow out of — it is the versioning scheme. Do not
+propose a major release, and do not bump to `1.0.0` however significant a change
+feels.
 
 | Highest bucket present | Bump | Example |
 | --- | --- | --- |
-| Breaking | minor | 0.2.3 → 0.3.0 |
-| Added | minor | 0.2.3 → 0.3.0 |
-| Fixed only | patch | 0.2.3 → 0.2.4 |
+| Breaking | minor | 0.3.1 → 0.4.0 |
+| Added | minor | 0.3.1 → 0.4.0 |
+| Fixed only | patch | 0.3.0 → 0.3.1 |
 | Internal only | — | do not release; say so and stop |
 
-Once the project reaches 1.0.0, switch to standard semver: breaking → major,
-added → minor, fixed → patch.
+So the minor digit carries both new features and breaking changes, and the patch
+digit carries fixes. That is deliberate: nobody pins a version range against
+this CLI — everyone runs `infer update` and gets the latest single file — so the
+major/minor distinction semver exists to communicate has nothing to communicate
+here. Keeping it at `0.x` says exactly that, permanently.
 
 State the computed version and the single change that drove it before
 proceeding. If the only changes are internal, do not invent a release — report

@@ -582,7 +582,9 @@ company licence — see https://remotion.pro`,
 );
 
 export const renderCmd = Command.make("render").pipe(
-	Command.withShortDescription("Render TSX compositions to images and PDFs."),
+	Command.withShortDescription(
+		"Render TSX compositions to images, PDFs and videos.",
+	),
 	Command.withDescription(
 		`Turn a React TSX component into an image or a PDF.
 
