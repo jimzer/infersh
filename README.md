@@ -44,6 +44,8 @@ just run --help # run from source
 
 Running from source reports version `dev`, and `infer update` refuses to overwrite a checkout.
 
+Design decisions and the gotchas behind them are recorded in [`docs/adrs`](docs/adrs/).
+
 ## Releasing
 
 Push to `main` runs `just checkall` and `just bundle`. Publishing a GitHub release tagged `vX.Y.Z` builds the bundle stamped with that tag and attaches `infer.js` to the release, which is what `install.sh` and `infer update` download.
