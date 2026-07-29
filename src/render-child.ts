@@ -109,6 +109,9 @@ const launch = async () => {
 	for (const path of CHROME_CANDIDATES) {
 		attempts.push({ label: path, options: { executablePath: path } });
 	}
+	// Last resort: a browser installed by `playwright install`. Only works when
+	// its build number matches this playwright-core, so it is tried last.
+	attempts.push({ label: "playwright's own browser", options: {} });
 
 	for (const attempt of attempts) {
 		try {
