@@ -59,6 +59,18 @@ infer fal run fal-ai/flux/dev/image-to-image \
 # uploaded ./photo.jpg -> https://v3b.fal.media/files/b/...
 ```
 
+### Bright Data
+
+```bash
+infer bdata scrape https://example.com --data-format markdown   # LLM-ready text
+infer bdata scrape https://example.com --format json | jq       # structured
+infer bdata scrape https://a.com https://b.com                  # batch, in parallel
+infer bdata search "pizza restaurants" --format json            # Google SERP
+infer bdata search "pizza" --engine bing --country gb
+```
+
+Options can be passed either as flags or as one JSON object via `--input` — unknown keys are rejected rather than silently ignored.
+
 ### Groq
 
 ```bash
