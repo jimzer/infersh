@@ -45,12 +45,35 @@ export const providerIds = Object.keys(providers) as [
 	...ProviderId[],
 ];
 
+/**
+ * True when the OS has no usable credential store at all — a headless Linux
+ * box without libsecret, a container, some WSL setups. Distinct from "the
+ * store works but holds nothing", which is not an error.
+ */
+const isStoreUnavailable = (cause: unknown): boolean => {
+	if (typeof cause !== "object" || cause === null) return false;
+	const code = (cause as { code?: unknown }).code;
+	if (code === "ERR_SECRETS_PLATFORM_ERROR") return true;
+	const message = (cause as { message?: unknown }).message;
+	return (
+		typeof message === "string" && /libsecret|not available/i.test(message)
+	);
+};
+
 export class SecretsError extends Data.TaggedError("SecretsError")<{
 	readonly action: "read" | "write" | "delete";
 	readonly provider: ProviderId;
 	readonly cause: unknown;
 }> {
+	/** The OS credential store itself is missing, not just this key. */
+	get unavailable(): boolean {
+		return isStoreUnavailable(this.cause);
+	}
+
 	override get message(): string {
+		if (this.unavailable) {
+			return `No OS credential store available (${this.cause}).\nOn Linux install libsecret, or set ${providers[this.provider].env} in the environment instead.`;
+		}
 		return `Failed to ${this.action} the ${providers[this.provider].label} key: ${this.cause}`;
 	}
 }

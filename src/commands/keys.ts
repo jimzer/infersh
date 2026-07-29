@@ -4,7 +4,13 @@
 
 import { Console, Effect, Option, Redacted } from "effect";
 import { Argument, Command, Prompt } from "effect/unstable/cli";
-import { mask, providerIds, providers, Secrets } from "../secrets.ts";
+import {
+	mask,
+	providerIds,
+	providers,
+	type ResolvedKey,
+	Secrets,
+} from "../secrets.ts";
 
 // Effect CLI reuses the full description in the parent's subcommand listing,
 // so keep it to one line or `infer keys --help` turns into a wall of text.
@@ -53,12 +59,28 @@ const setCmd = Command.make("set", {}, () =>
 const listCmd = Command.make("list", {}, () =>
 	Effect.gen(function* () {
 		const secrets = yield* Secrets;
+		let unavailable = false;
+
 		for (const id of providerIds) {
-			const resolved = yield* secrets.get(id);
+			// A machine with no credential store can still resolve keys from the
+			// environment, so report that rather than failing the whole listing.
+			const resolved = yield* secrets.get(id).pipe(
+				Effect.catch((error) => {
+					if (!error.unavailable) return Effect.fail(error);
+					unavailable = true;
+					return Effect.succeed(Option.none<ResolvedKey>());
+				}),
+			);
 			const status = Option.isNone(resolved)
 				? "not set"
 				: `${mask(resolved.value.key)}  (${resolved.value.source})`;
 			yield* Console.log(`${id.padEnd(12)} ${status}`);
+		}
+
+		if (unavailable) {
+			yield* Console.log(
+				"\nNo OS credential store available — only environment variables can be read.",
+			);
 		}
 	}),
 ).pipe(

@@ -6,6 +6,7 @@ import {
 	mask,
 	type ProviderId,
 	Secrets,
+	SecretsError,
 } from "./secrets.ts";
 
 /** Runs an effect against an isolated in-memory store — never the keychain. */
@@ -110,6 +111,33 @@ describe("Secrets", () => {
 		} finally {
 			delete process.env.FAL_KEY;
 		}
+	});
+});
+
+describe("SecretsError.unavailable", () => {
+	const error = (cause: unknown) =>
+		new SecretsError({ action: "read", provider: "fal", cause });
+
+	test("detects the Bun platform error code", () => {
+		expect(error({ code: "ERR_SECRETS_PLATFORM_ERROR" }).unavailable).toBe(
+			true,
+		);
+	});
+
+	test("detects a missing libsecret by message", () => {
+		expect(error(new Error("libsecret not available")).unavailable).toBe(true);
+	});
+
+	test("points at the env var when there is no store", () => {
+		expect(error(new Error("libsecret not available")).message).toContain(
+			"FAL_KEY",
+		);
+	});
+
+	test("an ordinary failure is not a missing store", () => {
+		expect(error(new Error("keychain access denied")).unavailable).toBe(false);
+		expect(error("boom").unavailable).toBe(false);
+		expect(error(null).unavailable).toBe(false);
 	});
 });
 
