@@ -50,4 +50,4 @@ Design decisions and the gotchas behind them are recorded in [`docs/adrs`](docs/
 
 Push to `main` runs `just checkall` and `just bundle`. Publishing a GitHub release tagged `vX.Y.Z` builds the bundle stamped with that tag and attaches `infer.js` to the release, which is what `install.sh` and `infer update` download.
 
-To cut one, run the `/release` skill: it reads the full diff since the previous release, classifies it into breaking changes, features and fixes, derives the version from that, writes the notes, and verifies the published artifact reports the tagged version.
+To cut one, run the `/release` skill: it reads the full diff since the previous release, classifies it into breaking changes, features and fixes, derives the version from that, writes the notes, verifies the published artifact reports the tagged version, and finally smoke tests the result by running `infer update` on the local install through the official channel.

@@ -1,7 +1,8 @@
 ---
 name: release
-description: Cut a release of the infer CLI. Reads the full diff since the previous release, classifies it into breaking changes / features / fixes, computes the next semver number from what actually changed, writes user-facing release notes, and publishes the GitHub release after verifying the workflow shipped a correct artifact. Use when asked to release, cut a release, ship a version, or publish a new version.
+description: Cut a release of the infer CLI. Reads the full diff since the previous release, classifies it into breaking changes / features / fixes, computes the next semver number from what actually changed, writes user-facing release notes, publishes the GitHub release, then smoke tests it by updating this machine's own install through the official channel. Use when asked to release, cut a release, ship a version, or publish a new version.
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob
+user-invocable: true
 ---
 
 # Release the infer CLI
@@ -156,9 +157,48 @@ publishing — it once made a no-op update report success (`docs/adrs/0004`).
 `raw.githubusercontent.com` caches the same way, so a just-pushed `install.sh`
 is not immediately what `curl | sh` fetches.
 
-A release is done only when the workflow is green, `infer.js` is attached, and
-the downloaded artifact reports the tagged version. Report the release URL and
-the version bump reasoning.
+## 9. Dogfood the release through the official channel
+
+Checking that the asset exists is not the same as checking that a user can
+get it. Update this machine's own install the way a user would, then exercise
+it:
+
+```bash
+command -v infer                 # expect ~/.local/bin/infer
+infer --version                  # the version you are upgrading FROM
+infer update                     # the official upgrade path
+infer --version                  # must now report v<version>
+infer --help
+infer keys list
+```
+
+If `infer` is not installed, install it through the published installer first
+and treat that as the smoke test instead:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jimzer/infersh/main/install.sh | sh
+```
+
+Rules for this step:
+
+- Run the **installed** binary. Never `just run`, never `./dist/infer.js` —
+  those bypass the delivery path this step exists to test.
+- Run it from **outside the repository**. Bun auto-loads `.env` from the
+  working directory, so running inside the project makes every key resolve
+  from the environment and hides the credential-store path (`docs/adrs/0002`).
+- `infer update` must actually move the version. "Exited 0" proves nothing —
+  a stale asset once made a no-op update report success (`docs/adrs/0004`).
+  Compare `--version` before and after.
+- If the installer was changed in this release, `raw.githubusercontent.com`
+  may still serve the previous copy for a few minutes. Confirm which one ran
+  from its output (the fixed installer prints the resolved tag,
+  `Downloading infer vX.Y.Z...`) rather than grepping the script — a grep for
+  an old URL also matches the comment explaining why it is not used.
+
+A release is done only when the workflow is green, `infer.js` is attached, the
+downloaded artifact reports the tagged version, and `infer update` on this
+machine moved to it and still runs. Report the release URL, the version bump
+reasoning, and the before/after versions from the dogfood step.
 
 ## If something fails
 
@@ -168,3 +208,6 @@ the version bump reasoning.
 - Version mismatch between tag and artifact → the workflow's verify step should
   have caught it; treat a mismatch that reaches an asset as a release bug and
   investigate before republishing.
+- `infer update` reports success but `--version` is unchanged → the update path
+  resolved a stale asset. This is a bug in `src/commands/update.ts`, not a
+  transient glitch. Do not paper over it by reinstalling; fix and re-release.
