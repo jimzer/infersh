@@ -4,7 +4,7 @@
 
 import { Console, Effect, Option, Redacted } from "effect";
 import { Argument, Command, Prompt } from "effect/unstable/cli";
-import * as Secrets from "../secrets.ts";
+import { mask, providerIds, providers, Secrets } from "../secrets.ts";
 
 // Effect CLI reuses the full description in the parent's subcommand listing,
 // so keep it to one line or `infer keys --help` turns into a wall of text.
@@ -13,11 +13,12 @@ const SET_DESCRIPTION =
 
 const setCmd = Command.make("set", {}, () =>
 	Effect.gen(function* () {
+		const secrets = yield* Secrets;
 		yield* Console.log("Leave a prompt blank to keep the current value.\n");
 
-		for (const id of Secrets.providerIds) {
-			const info = Secrets.providers[id];
-			const existing = yield* Secrets.get(id);
+		for (const id of providerIds) {
+			const info = providers[id];
+			const existing = yield* secrets.get(id);
 
 			// An env var wins over the keychain at resolve time, so saving a key
 			// here would have no visible effect until that var is unset.
@@ -43,7 +44,7 @@ const setCmd = Command.make("set", {}, () =>
 				continue;
 			}
 
-			yield* Secrets.set(id, Redacted.make(value));
+			yield* secrets.set(id, Redacted.make(value));
 			yield* Console.log(`  saved ${info.label} key`);
 		}
 	}),
@@ -51,11 +52,12 @@ const setCmd = Command.make("set", {}, () =>
 
 const listCmd = Command.make("list", {}, () =>
 	Effect.gen(function* () {
-		for (const id of Secrets.providerIds) {
-			const resolved = yield* Secrets.get(id);
+		const secrets = yield* Secrets;
+		for (const id of providerIds) {
+			const resolved = yield* secrets.get(id);
 			const status = Option.isNone(resolved)
 				? "not set"
-				: `${Secrets.mask(resolved.value.key)}  (${resolved.value.source})`;
+				: `${mask(resolved.value.key)}  (${resolved.value.source})`;
 			yield* Console.log(`${id.padEnd(12)} ${status}`);
 		}
 	}),
@@ -67,11 +69,12 @@ const listCmd = Command.make("list", {}, () =>
 
 const rmCmd = Command.make(
 	"rm",
-	{ provider: Argument.choice("provider", Secrets.providerIds) },
+	{ provider: Argument.choice("provider", providerIds) },
 	(config) =>
 		Effect.gen(function* () {
-			const deleted = yield* Secrets.remove(config.provider);
-			const label = Secrets.providers[config.provider].label;
+			const secrets = yield* Secrets;
+			const deleted = yield* secrets.remove(config.provider);
+			const label = providers[config.provider].label;
 			yield* Console.log(
 				deleted ? `removed ${label} key` : `no stored ${label} key`,
 			);

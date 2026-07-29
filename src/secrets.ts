@@ -1,12 +1,13 @@
 /**
- * API key storage backed by the OS credential store.
+ * `Secrets` — API key storage backed by the OS credential store.
  *
- * `Bun.secrets` talks to the macOS Keychain, libsecret (GNOME Keyring,
- * KWallet) on Linux, and the Windows Credential Manager — so keys never
- * land in a dotfile, a shell profile, or shell history.
+ * The default layer uses `Bun.secrets`, which talks to the macOS Keychain,
+ * libsecret (GNOME Keyring, KWallet) on Linux, and the Windows Credential
+ * Manager — so keys never land in a dotfile, a shell profile, or shell
+ * history. Tests use {@link layerMemory} instead of touching the real store.
  */
 
-import { Data, Effect, Option, Redacted } from "effect";
+import { Context, Data, Effect, Layer, Option, Redacted } from "effect";
 
 /** Keychain service name. Every key is stored under `<SERVICE>/<providerId>`. */
 const SERVICE = "infersh";
@@ -71,72 +72,115 @@ export interface ResolvedKey {
 	readonly source: KeySource;
 }
 
-export const set = (
-	provider: ProviderId,
-	key: Redacted.Redacted,
-): Effect.Effect<void, SecretsError> =>
-	Effect.tryPromise({
-		try: () =>
-			Bun.secrets.set({
-				service: SERVICE,
-				name: provider,
-				value: Redacted.value(key),
-			}),
-		catch: (cause) => new SecretsError({ action: "write", provider, cause }),
-	});
-
-export const remove = (
-	provider: ProviderId,
-): Effect.Effect<boolean, SecretsError> =>
-	Effect.tryPromise({
-		try: () => Bun.secrets.delete({ service: SERVICE, name: provider }),
-		catch: (cause) => new SecretsError({ action: "delete", provider, cause }),
-	});
-
-/** Reads the keychain only — ignores the environment. */
-const fromKeychain = (
-	provider: ProviderId,
-): Effect.Effect<string | null, SecretsError> =>
-	Effect.tryPromise({
-		try: () => Bun.secrets.get({ service: SERVICE, name: provider }),
-		catch: (cause) => new SecretsError({ action: "read", provider, cause }),
-	});
-
 /**
- * Resolves a key, preferring the environment variable so a shell or CI job
- * can override what is in the keychain.
+ * The low-level credential store — the only part that touches the platform.
+ * Swapping this is what makes the service testable without a real keychain.
  */
-export const get = (
-	provider: ProviderId,
-): Effect.Effect<Option.Option<ResolvedKey>, SecretsError> =>
-	Effect.gen(function* () {
-		const fromEnv = process.env[providers[provider].env];
-		if (fromEnv) {
-			return Option.some({
-				key: Redacted.make(fromEnv),
-				source: "env" as const,
-			});
-		}
-		const stored = yield* fromKeychain(provider);
-		return stored === null
-			? Option.none()
-			: Option.some({
-					key: Redacted.make(stored),
-					source: "keychain" as const,
-				});
-	});
+interface Store {
+	readonly get: (name: string) => Promise<string | null>;
+	readonly set: (name: string, value: string) => Promise<void>;
+	readonly delete: (name: string) => Promise<boolean>;
+}
 
-/** Like {@link get}, but fails when the key is absent. For provider call sites. */
-export const requireKey = (
-	provider: ProviderId,
-): Effect.Effect<Redacted.Redacted, SecretsError | MissingKeyError> =>
-	Effect.gen(function* () {
-		const resolved = yield* get(provider);
-		if (Option.isNone(resolved)) {
-			return yield* Effect.fail(new MissingKeyError({ provider }));
-		}
-		return resolved.value.key;
-	});
+const bunStore: Store = {
+	get: (name) => Bun.secrets.get({ service: SERVICE, name }),
+	set: (name, value) => Bun.secrets.set({ service: SERVICE, name, value }),
+	delete: (name) => Bun.secrets.delete({ service: SERVICE, name }),
+};
+
+const memoryStore = (seed?: Partial<Record<ProviderId, string>>): Store => {
+	const entries = new Map<string, string>(Object.entries(seed ?? {}));
+	return {
+		get: async (name) => entries.get(name) ?? null,
+		set: async (name, value) => void entries.set(name, value),
+		delete: async (name) => entries.delete(name),
+	};
+};
+
+export interface SecretsShape {
+	/** Resolves a key, preferring the environment variable over the store. */
+	readonly get: (
+		provider: ProviderId,
+	) => Effect.Effect<Option.Option<ResolvedKey>, SecretsError>;
+	readonly set: (
+		provider: ProviderId,
+		key: Redacted.Redacted,
+	) => Effect.Effect<void, SecretsError>;
+	/** Returns `false` when there was nothing stored to delete. */
+	readonly remove: (
+		provider: ProviderId,
+	) => Effect.Effect<boolean, SecretsError>;
+	/** Like {@link SecretsShape.get}, but fails when the key is absent. */
+	readonly require: (
+		provider: ProviderId,
+	) => Effect.Effect<Redacted.Redacted, SecretsError | MissingKeyError>;
+}
+
+export class Secrets extends Context.Service<Secrets, SecretsShape>()(
+	"Secrets",
+) {}
+
+const make = (
+	store: Store,
+	options: { readonly readEnv: boolean },
+): SecretsShape => {
+	const get: SecretsShape["get"] = (provider) =>
+		Effect.gen(function* () {
+			// An explicit env var wins so a shell or CI job can override the store.
+			const fromEnv = options.readEnv
+				? process.env[providers[provider].env]
+				: undefined;
+			if (fromEnv) {
+				return Option.some({
+					key: Redacted.make(fromEnv),
+					source: "env" as const,
+				});
+			}
+			const stored = yield* Effect.tryPromise({
+				try: () => store.get(provider),
+				catch: (cause) => new SecretsError({ action: "read", provider, cause }),
+			});
+			return stored === null
+				? Option.none()
+				: Option.some({
+						key: Redacted.make(stored),
+						source: "keychain" as const,
+					});
+		});
+
+	return {
+		get,
+		set: (provider, key) =>
+			Effect.tryPromise({
+				try: () => store.set(provider, Redacted.value(key)),
+				catch: (cause) =>
+					new SecretsError({ action: "write", provider, cause }),
+			}),
+		remove: (provider) =>
+			Effect.tryPromise({
+				try: () => store.delete(provider),
+				catch: (cause) =>
+					new SecretsError({ action: "delete", provider, cause }),
+			}),
+		require: (provider) =>
+			Effect.gen(function* () {
+				const resolved = yield* get(provider);
+				if (Option.isNone(resolved)) {
+					return yield* Effect.fail(new MissingKeyError({ provider }));
+				}
+				return resolved.value.key;
+			}),
+	};
+};
+
+/** Backed by the real OS credential store. */
+export const layer = Layer.succeed(Secrets)(make(bunStore, { readEnv: true }));
+
+/** In-memory and env-blind, so tests stay isolated from the machine. */
+export const layerMemory = (
+	seed?: Partial<Record<ProviderId, string>>,
+): Layer.Layer<Secrets> =>
+	Layer.sync(Secrets)(() => make(memoryStore(seed), { readEnv: false }));
 
 /** Renders a key for display: first and last 4 characters, rest masked. */
 export const mask = (key: Redacted.Redacted): string => {

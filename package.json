@@ -10,7 +10,8 @@
 		"start": "bun run src/main.ts",
 		"lint": "biome check --fix --unsafe",
 		"typecheck": "tsc --noEmit",
-		"checkall": "bun run lint && bun run typecheck"
+		"test": "bun test",
+		"checkall": "bun run lint && bun run typecheck && bun run test"
 	},
 	"devDependencies": {
 		"@types/bun": "^1.3.14"

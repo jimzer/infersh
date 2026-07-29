@@ -4,6 +4,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Console, Effect } from "effect";
 import { Command } from "effect/unstable/cli";
 import { keysCmd } from "./commands/keys.ts";
+import * as Secrets from "./secrets.ts";
 
 const VERSION = "0.2.0";
 
@@ -23,6 +24,7 @@ await Command.runWith(inferCmd, { version: VERSION })(
 			yield* Effect.sync(() => process.exit(1));
 		}),
 	),
+	Effect.provide(Secrets.layer),
 	Effect.provide(BunServices.layer),
 	Effect.runPromise,
 );
