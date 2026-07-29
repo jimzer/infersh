@@ -6,9 +6,11 @@ import { Command } from "effect/unstable/cli";
 import { FetchHttpClient } from "effect/unstable/http";
 import { runUpdateCheck } from "./autoupdate.ts";
 import { falCmd } from "./commands/fal.ts";
+import { groqCmd } from "./commands/groq.ts";
 import { keysCmd } from "./commands/keys.ts";
 import { updateCmd } from "./commands/update.ts";
 import * as Fal from "./fal.ts";
+import * as Groq from "./groq.ts";
 import * as Secrets from "./secrets.ts";
 import { VERSION } from "./version.ts";
 
@@ -20,11 +22,15 @@ const base = Layer.mergeAll(
 	BunServices.layer,
 );
 
-const appLayer = Layer.mergeAll(base, Fal.layer.pipe(Layer.provide(base)));
+const appLayer = Layer.mergeAll(
+	base,
+	Fal.layer.pipe(Layer.provide(base)),
+	Groq.layer.pipe(Layer.provide(base)),
+);
 
 const inferCmd = Command.make("infer").pipe(
 	Command.withDescription("Run inference providers from the command line."),
-	Command.withSubcommands([falCmd, keysCmd, updateCmd]),
+	Command.withSubcommands([falCmd, groqCmd, keysCmd, updateCmd]),
 );
 
 // `runWith` already absorbs the QuitError raised when a prompt is cancelled,

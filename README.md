@@ -59,6 +59,18 @@ infer fal run fal-ai/flux/dev/image-to-image \
 # uploaded ./photo.jpg -> https://v3b.fal.media/files/b/...
 ```
 
+### Groq
+
+```bash
+infer groq transcribe --file talk.m4a                     # transcribe to JSON
+infer groq transcribe --file talk.m4a --response-format text
+infer groq transcribe --file talk.m4a --response-format verbose_json \
+  --timestamp-granularities word                          # word-level timestamps
+infer groq transcribe --url https://example.com/long.mp3  # files over 25 MB
+```
+
+Audio is converted to 16 kHz mono FLAC with ffmpeg before upload — the same downsampling Groq applies server-side, so there is no accuracy cost. It roughly halves the file and accepts anything ffmpeg can read, not just Groq's own format list. Pass `--no-optimize` to send the file untouched.
+
 ### Keys
 
 ```bash

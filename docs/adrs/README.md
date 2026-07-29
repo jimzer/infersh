@@ -13,6 +13,7 @@ time to discover and would otherwise be rediscovered the hard way.
 | [6](0006-just-as-the-task-runner.md) | Just as the task runner |
 | [7](0007-notify-on-startup-install-on-request.md) | Notify on startup, install on request — why not auto-update |
 | [8](0008-upload-assets-by-existence-not-field-name.md) | Upload assets by existence, not by field name |
+| [9](0009-preprocess-audio-with-ffmpeg-by-default.md) | Preprocess audio with ffmpeg by default |
 
 ## Writing one
 
