@@ -24,6 +24,7 @@
 		"@fal-ai/client": "^1.9.4",
 		"@readme/openapi-parser": "^6.0.0",
 		"effect": "^4.0.0-beta.33",
+		"openai": "^6.33.0",
 		"openapi3-ts": "^4.5.0"
 	}
 }

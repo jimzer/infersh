@@ -2,6 +2,8 @@
 
 import * as bdProvider from "./providers/bd/index.ts";
 import * as falProvider from "./providers/fal.ts";
+import * as groqProvider from "./providers/groq.ts";
+import * as vercelProvider from "./providers/vercel.ts";
 
 const args = process.argv.slice(2);
 const provider = args[0];
@@ -13,6 +15,10 @@ if (!provider || provider === "--help" || provider === "-h") {
 	console.log("Providers:");
 	console.log("  fal    fal.ai models (image gen, editing, etc.)");
 	console.log("  bd     Brightdata web search, scraping & datasets");
+	console.log("  groq   Groq Whisper speech-to-text transcription");
+	console.log(
+		"  vercel Vercel AI Gateway (text generation, structured output)",
+	);
 	console.log("");
 	console.log("Examples:");
 	console.log(
@@ -22,6 +28,9 @@ if (!provider || provider === "--help" || provider === "-h") {
 	console.log("  infer bd linkedin discover-jobs --location Paris");
 	console.log(
 		"  infer bd tiktok posts discover-by-keyword --search-keyword cooking",
+	);
+	console.log(
+		'  infer vercel generate --model openai/gpt-4o --input "Say hello"',
 	);
 	process.exit(0);
 }
@@ -43,8 +52,14 @@ switch (provider) {
 	case "bd":
 		await bdProvider.run(args.slice(1));
 		break;
+	case "groq":
+		await groqProvider.run(args.slice(1));
+		break;
+	case "vercel":
+		await vercelProvider.run(args.slice(1));
+		break;
 	default:
 		console.error(`Unknown provider: ${provider}`);
-		console.error("Available providers: fal, bd");
+		console.error("Available providers: fal, bd, groq, vercel");
 		process.exit(1);
 }

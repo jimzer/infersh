@@ -29,7 +29,20 @@ export async function run(endpointId: string, args: string[]): Promise<void> {
 		const payload = await resolveLocalFiles(parsed, (blob) =>
 			fal.storage.upload(blob),
 		);
-		const result = await fal.subscribe(endpointId, { input: payload });
+		const result = await fal.subscribe(endpointId, {
+			input: payload,
+			logs: true,
+			onQueueUpdate: (update) => {
+				if (update.status === "IN_QUEUE") {
+					process.stderr.write(`[queue] waiting...\n`);
+				}
+				if (update.status === "IN_PROGRESS") {
+					for (const log of update.logs ?? []) {
+						process.stderr.write(`${log.message}\n`);
+					}
+				}
+			},
+		});
 		console.log(JSON.stringify(result.data, null, 2));
 		return;
 	}
