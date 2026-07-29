@@ -500,7 +500,15 @@ export const videoInput = (
 	});
 
 export interface DiscoverInputOptions {
-	readonly numOfPosts?: number;
+	/**
+	 * Required, not optional.
+	 *
+	 * The API treats a missing `num_of_posts` as "no limit", and a keyword can
+	 * match an unbounded number of videos — each one billed. Making this
+	 * mandatory in the type means a caller cannot start a runaway job by
+	 * forgetting a flag. See `docs/adrs/0011`.
+	 */
+	readonly numOfPosts: number;
 	readonly startDate?: string;
 	readonly endDate?: string;
 	readonly country?: string;
@@ -512,9 +520,11 @@ export const discoverInput = (
 	options: DiscoverInputOptions,
 ): ReadonlyArray<Record<string, unknown>> =>
 	keywords.map((keyword) => {
-		const row: Record<string, unknown> = { keyword };
-		// Omitted rather than zeroed: the API reads a missing value as no limit.
-		if (options.numOfPosts !== undefined) row.num_of_posts = options.numOfPosts;
+		// num_of_posts is always sent; omitting it would mean "no limit".
+		const row: Record<string, unknown> = {
+			keyword,
+			num_of_posts: options.numOfPosts,
+		};
 		if (options.startDate) row.start_date = options.startDate;
 		if (options.endDate) row.end_date = options.endDate;
 		if (options.country) row.country = options.country;

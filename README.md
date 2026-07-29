@@ -69,10 +69,12 @@ infer bdata search "pizza restaurants" --format json            # Google SERP
 infer bdata search "pizza" --engine bing --country gb
 
 infer bdata youtube video https://youtu.be/dQw4w9WgXcQ          # full video metadata
-infer bdata youtube discover "ai tools" --num-of-posts 20       # find videos by keyword
+infer bdata youtube discover "ai tools" --num-of-posts 20       # find videos by keyword (limit required)
 ```
 
 Options can be passed either as flags or as one JSON object via `--input` — unknown keys are rejected rather than silently ignored.
+
+Where a parameter bounds a *billed* quantity, it is required rather than defaulted: `youtube discover` will not run without `--num-of-posts`, because the API reads an absent limit as unlimited and bills per collected video.
 
 ### Groq
 

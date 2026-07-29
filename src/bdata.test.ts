@@ -240,10 +240,10 @@ describe("videoInput", () => {
 });
 
 describe("discoverInput", () => {
-	test("wraps each keyword in its own row", () => {
-		expect(discoverInput(["pizza", "sushi"], {})).toEqual([
-			{ keyword: "pizza" },
-			{ keyword: "sushi" },
+	test("wraps each keyword in its own row, always with a limit", () => {
+		expect(discoverInput(["pizza", "sushi"], { numOfPosts: 5 })).toEqual([
+			{ keyword: "pizza", num_of_posts: 5 },
+			{ keyword: "sushi", num_of_posts: 5 },
 		]);
 	});
 
@@ -266,14 +266,13 @@ describe("discoverInput", () => {
 		]);
 	});
 
-	test("omits num_of_posts when unset, since missing means no limit", () => {
-		const [row] = discoverInput(["pizza"], {});
-		expect(Object.hasOwn(row ?? {}, "num_of_posts")).toBe(false);
-	});
-
-	test("keeps an explicit zero rather than dropping it as falsy", () => {
-		expect(discoverInput(["pizza"], { numOfPosts: 0 })[0]).toMatchObject({
-			num_of_posts: 0,
-		});
+	test("never omits num_of_posts, since missing would mean no limit", () => {
+		// The API bills per collected video, so an unbounded discovery run is a
+		// runaway cost. numOfPosts is required by the type; this pins the
+		// behaviour that it always reaches the wire.
+		for (const limit of [1, 20, 500]) {
+			const [row] = discoverInput(["pizza"], { numOfPosts: limit });
+			expect(row).toMatchObject({ num_of_posts: limit });
+		}
 	});
 });

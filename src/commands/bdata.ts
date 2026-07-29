@@ -356,9 +356,8 @@ const discoverCmd = Command.make(
 		),
 		numOfPosts: Flag.integer("num-of-posts").pipe(
 			Flag.withMetavar("n"),
-			Flag.optional,
 			Flag.withDescription(
-				"Maximum videos to collect per keyword. Omit for no limit, which can be slow and expensive.",
+				"Required. Maximum videos to collect per keyword. Every collected video is billed, and the API treats an absent limit as unlimited, so this must be stated rather than defaulted.",
 			),
 		),
 		startDate: Flag.string("start-date").pipe(
@@ -386,14 +385,25 @@ const discoverCmd = Command.make(
 	(config) =>
 		Effect.gen(function* () {
 			const bdata = yield* Bdata;
+			if (config.numOfPosts < 1) {
+				return yield* Effect.fail(
+					new BdataError({
+						reason: "--num-of-posts must be at least 1.",
+					}),
+				);
+			}
 			const result = yield* bdata.datasetScrape(
 				{
 					datasetId: YOUTUBE_VIDEOS_DATASET,
 					type: "discover_new",
 					discoverBy: "keyword",
+					// Belt and braces: num_of_posts bounds each input row, and
+					// limit_per_input bounds the job server-side, so a limit still
+					// applies if either is ignored.
+					limitPerInput: config.numOfPosts,
 				},
 				discoverInput(config.keywords, {
-					numOfPosts: Option.getOrUndefined(config.numOfPosts),
+					numOfPosts: config.numOfPosts,
 					startDate: Option.getOrUndefined(config.startDate),
 					endDate: Option.getOrUndefined(config.endDate),
 					country: Option.getOrUndefined(config.country),
@@ -409,10 +419,13 @@ const discoverCmd = Command.make(
 Returns the same records as \`video\`, but found by searching rather
 than by URL.
 
+--num-of-posts is required. A keyword can match an unbounded number of
+videos and every one is billed, so the limit has to be stated rather
+than defaulted. It is enforced twice: per input row and again as a
+server-side cap on the job.
+
 Discovery is queued rather than answered inline: the job is polled
-every 10 seconds for up to 10 minutes, with progress on stderr. Pass
---num-of-posts to keep runs short, since an unbounded keyword can
-collect a very large number of videos.`,
+every 10 seconds for up to 10 minutes, with progress on stderr.`,
 	),
 	Command.withExamples([
 		{

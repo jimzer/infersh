@@ -15,6 +15,7 @@ time to discover and would otherwise be rediscovered the hard way.
 | [8](0008-upload-assets-by-existence-not-field-name.md) | Upload assets by existence, not by field name |
 | [9](0009-preprocess-audio-with-ffmpeg-by-default.md) | Preprocess audio with ffmpeg by default |
 | [10](0010-bright-data-over-rest-not-the-sdk.md) | Bright Data over REST — why the official SDK cannot run on Bun |
+| [11](0011-billed-limits-are-required-not-defaulted.md) | Billed limits are required, never defaulted |
 
 ## Writing one
 
