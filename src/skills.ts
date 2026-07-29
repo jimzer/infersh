@@ -15,6 +15,8 @@ import falMd from "./skills/references/fal.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import groqMd from "./skills/references/groq.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
+import remotionMd from "./skills/references/remotion.md" with { type: "text" };
+// @ts-expect-error text import: Bun inlines the file contents as a string
 import renderMd from "./skills/references/render.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import skillMd from "./skills/SKILL.md" with { type: "text" };
@@ -37,6 +39,7 @@ export const SKILL_FILES: ReadonlyArray<{
 }> = [
 	{ path: "SKILL.md", contents: skillMd as string },
 	{ path: "references/render.md", contents: renderMd as string },
+	{ path: "references/remotion.md", contents: remotionMd as string },
 	{ path: "references/fal.md", contents: falMd as string },
 	{ path: "references/bdata.md", contents: bdataMd as string },
 	{ path: "references/groq.md", contents: groqMd as string },

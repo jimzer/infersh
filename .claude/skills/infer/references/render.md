@@ -95,7 +95,10 @@ export default ({ title = "Hi" }: { title?: string }) => {
   `durationInFrames`. Flags override it; an unset flag never overrides it.
 - `--duration` is in **frames, not seconds** — at 30fps, 90 frames is three
   seconds.
-- See <https://remotion.dev/docs> for the animation API.
+- **CSS `transition` and `animation` do not work**, nor Tailwind animation
+  classes — every frame is rendered independently, so they render as one static
+  state. See [remotion.md](remotion.md) for the animation rules, media
+  components, and how to look up current Remotion docs.
 
 ### Iterate with `--frame`, then encode
 

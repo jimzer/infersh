@@ -27,6 +27,7 @@ already does that and cannot go stale.
 | area | what it does | reference |
 | --- | --- | --- |
 | `infer render` | TSX component → PNG / JPEG / WebP / PDF / MP4 | [render.md](references/render.md) |
+| ↳ video | writing animated compositions, and looking up Remotion docs | [remotion.md](references/remotion.md) |
 | `infer fal` | fal.ai models: search, inspect, run | [fal.md](references/fal.md) |
 | `infer bdata` | Bright Data: scrape pages, search engines, YouTube | [bdata.md](references/bdata.md) |
 | `infer groq` | Groq Whisper speech-to-text | [groq.md](references/groq.md) |
