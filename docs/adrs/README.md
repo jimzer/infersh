@@ -11,6 +11,7 @@ time to discover and would otherwise be rediscovered the hard way.
 | [4](0004-resolve-releases-through-the-api.md) | Resolve releases through the API, not `latest/download` |
 | [5](0005-self-replacing-updates.md) | Self-replacing updates |
 | [6](0006-just-as-the-task-runner.md) | Just as the task runner |
+| [7](0007-notify-on-startup-install-on-request.md) | Notify on startup, install on request — why not auto-update |
 
 ## Writing one
 

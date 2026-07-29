@@ -17,6 +17,13 @@ infer update          # download and install the latest release
 infer update --check  # just report whether one is available
 ```
 
+`infer` also checks for updates on its own, at most once a day, and prints a one-line notice when a newer version exists. The check runs after your command, never delays it, and is skipped when output is piped, when `CI` is set, or when running from source.
+
+| variable | effect |
+| --- | --- |
+| `INFER_AUTO_UPDATE=1` | install updates automatically instead of just notifying |
+| `INFER_NO_UPDATE_CHECK=1` | disable the check entirely |
+
 ## Usage
 
 ```bash
