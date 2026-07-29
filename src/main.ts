@@ -1,65 +1,28 @@
 #!/usr/bin/env bun
 
-import * as bdProvider from "./providers/bd/index.ts";
-import * as falProvider from "./providers/fal.ts";
-import * as groqProvider from "./providers/groq.ts";
-import * as vercelProvider from "./providers/vercel.ts";
+import { BunServices } from "@effect/platform-bun";
+import { Console, Effect } from "effect";
+import { Command } from "effect/unstable/cli";
+import { keysCmd } from "./commands/keys.ts";
 
-const args = process.argv.slice(2);
-const provider = args[0];
+const VERSION = "0.2.0";
 
-if (!provider || provider === "--help" || provider === "-h") {
-	console.log("Usage: infer <provider> <command> [flags...]");
-	console.log("       infer <provider> <command> json '<payload>'");
-	console.log("");
-	console.log("Providers:");
-	console.log("  fal    fal.ai models (image gen, editing, etc.)");
-	console.log("  bd     Brightdata web search, scraping & datasets");
-	console.log("  groq   Groq Whisper speech-to-text transcription");
-	console.log(
-		"  vercel Vercel AI Gateway (text generation, structured output)",
-	);
-	console.log("");
-	console.log("Examples:");
-	console.log(
-		"  infer fal fal-ai/nano-banana/edit --prompt 'a cat' --image-urls http://...",
-	);
-	console.log('  infer bd search "pizza restaurants" --data-format markdown');
-	console.log("  infer bd linkedin discover-jobs --location Paris");
-	console.log(
-		"  infer bd tiktok posts discover-by-keyword --search-keyword cooking",
-	);
-	console.log(
-		'  infer vercel generate --model openai/gpt-4o --input "Say hello"',
-	);
-	process.exit(0);
-}
+const inferCmd = Command.make("infer").pipe(
+	Command.withDescription("Run inference providers from the command line."),
+	Command.withSubcommands([keysCmd]),
+);
 
-switch (provider) {
-	case "fal": {
-		const model = args[1];
-		const rest = args.slice(2);
-		if (!model || model === "--help" || model === "-h") {
-			console.error("Usage: infer fal <model> [flags...]");
-			console.error(
-				"       infer fal <model> --help  (show model flags from OpenAPI)",
-			);
-			process.exit(1);
-		}
-		await falProvider.run(model, rest);
-		break;
-	}
-	case "bd":
-		await bdProvider.run(args.slice(1));
-		break;
-	case "groq":
-		await groqProvider.run(args.slice(1));
-		break;
-	case "vercel":
-		await vercelProvider.run(args.slice(1));
-		break;
-	default:
-		console.error(`Unknown provider: ${provider}`);
-		console.error("Available providers: fal, bd, groq, vercel");
-		process.exit(1);
-}
+// `runWith` already absorbs the QuitError raised when a prompt is cancelled,
+// so everything left here is a real failure worth printing.
+await Command.runWith(inferCmd, { version: VERSION })(
+	process.argv.slice(2),
+).pipe(
+	Effect.catch((error) =>
+		Effect.gen(function* () {
+			yield* Console.error(error.message);
+			yield* Effect.sync(() => process.exit(1));
+		}),
+	),
+	Effect.provide(BunServices.layer),
+	Effect.runPromise,
+);
