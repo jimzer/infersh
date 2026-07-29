@@ -4,7 +4,7 @@ import {
 	assetPathFor,
 	buildHtml,
 	formatFromPath,
-} from "./render.ts";
+} from "./render-shared.ts";
 
 describe("formatFromPath", () => {
 	test("maps the extension to a Playwright image type", () => {

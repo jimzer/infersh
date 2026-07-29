@@ -59,6 +59,19 @@ infer fal run fal-ai/flux/dev/image-to-image \
 # uploaded ./photo.jpg -> https://v3b.fal.media/files/b/...
 ```
 
+### Render
+
+```bash
+infer render image card.tsx -o card.png --props '{"title":"Hello"}'
+infer render image card.tsx --assets ./public --width 1200 --scale 2
+infer render pdf invoice.tsx --props ./data.json --margin 1cm
+cat card.tsx | infer render image - -o card.png
+```
+
+A composition is a `.tsx` file with a default export. It may import other `.tsx` files and **any npm package** — both are resolved for you at render time from Bun's cache, with no project setup. Renders happen in isolation, so nothing is picked up from whatever directory the file lives in. Local assets referenced by relative URL are served straight from disk by request interception; no server is started and nothing is copied.
+
+Requires Google Chrome or Chromium (`CHROME_PATH` to pick one).
+
 ### Bright Data
 
 ```bash
