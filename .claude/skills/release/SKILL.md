@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a release of the infer CLI. Reads the full diff since the previous release, classifies it into breaking changes / features / fixes, computes the next semver number from what actually changed, writes user-facing release notes, publishes the GitHub release, then smoke tests it by updating this machine's own install through the official channel. Use when asked to release, cut a release, ship a version, or publish a new version.
+description: Cut a release of the infer CLI. Reads the full diff since the previous release, classifies it into breaking changes / features / fixes, computes the next semver number from what actually changed, writes user-facing release notes, checks the shipped agent skill still matches the code, publishes the GitHub release, then smoke tests it by updating this machine's own install through the official channel. Use when asked to release, cut a release, ship a version, or publish a new version.
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 user-invocable: true
 ---
@@ -72,7 +72,50 @@ Judge from the user's side of the CLI. Changes under `src/` are usually
 user-facing; changes under `docs/`, `.github/`, `*.test.ts` and `Justfile`
 usually are not — but verify rather than assume.
 
-## 5. Compute the version
+## 5. Check the shipped skill is still true
+
+`infer skills add` installs `src/skills/SKILL.md` and `src/skills/references/*.md`
+from inside the binary, so a release ships whatever those files currently say.
+They are prose with no tests behind them — the one part of the repo that can go
+stale silently.
+
+They deliberately do **not** list flags (`--help` covers that and cannot drift).
+What they *do* state, and what this release may have invalidated:
+
+- command and subcommand names, and the area table in `SKILL.md`
+- defaults quoted as facts (`--num-results` defaults to 10, `--duration` is in
+  frames, image height is measured from the content)
+- idioms (video uses `staticFile()`, image and pdf use plain relative URLs)
+- rules (which flags bound a billed quantity and are therefore required)
+- provider facts (upload limits, minimum billing, model names)
+
+Compare what the CLI has against what the skill claims:
+
+```bash
+just run --help | sed -n '/^SUBCOMMANDS/,$p'
+for c in $(just run --help | sed -n '/^SUBCOMMANDS/,$p' | awk 'NR>1{print $1}'); do
+  echo "== $c"; just run "$c" --help 2>/dev/null | sed -n '/^SUBCOMMANDS/,$p' | awk 'NR>1{print "   "$1}'
+done
+grep -rhoE 'infer [a-z-]+( [a-z-]+)?' src/skills/ | sort -u
+```
+
+That grep matches at most two words, so `infer bdata youtube discover` shows up
+as `infer bdata youtube`. Treat it as a prompt for attention, not a checklist —
+a command missing from the list is a real gap, but a command present in it may
+still be described wrongly.
+
+Then re-read the reference file for every area this release touched, and check
+each claim in it against the diff from step 3.
+
+**If anything is out of date, stop.** Do not quietly rewrite the skill as part
+of the release, and do not release with it wrong — an agent reading a stale
+skill will call the CLI incorrectly and blame the tool. Tell the user exactly
+which claims no longer hold, and **ask whether to fix them before releasing**.
+Only continue once they answer.
+
+If everything still holds, say so in one line and move on.
+
+## 6. Compute the version
 
 The project is pre-1.0, where the leading zero absorbs breakage:
 
@@ -90,7 +133,7 @@ State the computed version and the single change that drove it before
 proceeding. If the only changes are internal, do not invent a release — report
 that and ask whether to cut one anyway.
 
-## 6. Write the notes
+## 7. Write the notes
 
 Group by the buckets above, most consequential first, omitting empty groups.
 Write for someone who runs the CLI and has not read the code: name the command
@@ -114,7 +157,7 @@ curl -fsSL https://raw.githubusercontent.com/jimzer/infersh/main/install.sh | sh
 
 Show the notes and the version to the user before publishing.
 
-## 7. Verify locally, then publish
+## 8. Verify locally, then publish
 
 ```bash
 just checkall
@@ -135,7 +178,7 @@ gh release create "v<version>" -R jimzer/infersh \
 The tag is created by `gh release create` against the pushed HEAD, so push
 first.
 
-## 8. Verify the release actually shipped
+## 9. Verify the release actually shipped
 
 ```bash
 RUN=$(gh run list -R jimzer/infersh --workflow=release --limit 1 --json databaseId --jq '.[0].databaseId')
@@ -157,7 +200,7 @@ publishing — it once made a no-op update report success (`docs/adrs/0004`).
 `raw.githubusercontent.com` caches the same way, so a just-pushed `install.sh`
 is not immediately what `curl | sh` fetches.
 
-## 9. Dogfood the release through the official channel
+## 10. Dogfood the release through the official channel
 
 Checking that the asset exists is not the same as checking that a user can
 get it. Update this machine's own install the way a user would, then exercise

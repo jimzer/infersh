@@ -48,6 +48,7 @@ credential store:
 ```bash
 infer keys list    # which keys are set, masked, and where each resolves from
 infer keys set     # store them interactively (needs a terminal)
+infer keys rm fal  # forget a stored key
 ```
 
 `infer render` needs no key at all. If a command fails with "No … API key
