@@ -7,9 +7,9 @@ import { dirname, join } from "node:path";
 import { Console, Data, Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import {
+	ASSET_NAME,
 	isDev,
 	isNewer,
-	LATEST_ASSET_URL,
 	LATEST_RELEASE_API,
 	normalize,
 	REPO,
@@ -37,21 +37,45 @@ const fetchJson = (url: string) =>
 			if (!res.ok) {
 				throw new Error(`GitHub returned ${res.status} ${res.statusText}`);
 			}
-			return (await res.json()) as { tag_name?: string };
+			return (await res.json()) as {
+				tag_name?: string;
+				assets?: ReadonlyArray<{
+					name?: string;
+					browser_download_url?: string;
+				}>;
+			};
 		},
 		catch: (cause) =>
 			new UpdateError({ reason: `Could not check for updates: ${cause}` }),
 	});
 
-/** The tag of the most recent published release. */
-const latestVersion = Effect.gen(function* () {
+/**
+ * The most recent published release, with the exact asset URL for its tag.
+ *
+ * The `releases/latest/download/...` shortcut is deliberately not used: it is
+ * CDN-cached and keeps serving the *previous* release's asset for a while
+ * after a new one is published, which would silently "update" to the old
+ * build.
+ */
+const latestRelease = Effect.gen(function* () {
 	const body = yield* fetchJson(LATEST_RELEASE_API);
 	if (!body.tag_name) {
 		return yield* Effect.fail(
 			new UpdateError({ reason: `No published release found for ${REPO}.` }),
 		);
 	}
-	return normalize(body.tag_name);
+	const asset = body.assets?.find((a) => a.name === ASSET_NAME);
+	if (!asset?.browser_download_url) {
+		return yield* Effect.fail(
+			new UpdateError({
+				reason: `Release ${body.tag_name} has no ${ASSET_NAME} asset attached.`,
+			}),
+		);
+	}
+	return {
+		version: normalize(body.tag_name),
+		assetUrl: asset.browser_download_url,
+	};
 });
 
 /**
@@ -73,12 +97,12 @@ const installPath = Effect.try({
  * rename is atomic; replacing a running script is safe because the kernel
  * keeps the current process on the old inode.
  */
-const replaceBinary = (target: string) =>
+const replaceBinary = (target: string, assetUrl: string) =>
 	Effect.gen(function* () {
 		const temp = join(dirname(target), `.infer.update.${process.pid}`);
 		yield* Effect.tryPromise({
 			try: async () => {
-				const res = await fetch(LATEST_ASSET_URL, {
+				const res = await fetch(assetUrl, {
 					headers: { "User-Agent": `infer/${VERSION}` },
 				});
 				if (!res.ok) {
@@ -119,7 +143,7 @@ export const updateCmd = Command.make(
 	},
 	(config) =>
 		Effect.gen(function* () {
-			const latest = yield* latestVersion;
+			const { version: latest, assetUrl } = yield* latestRelease;
 
 			if (isDev()) {
 				yield* Console.log(
@@ -153,7 +177,7 @@ export const updateCmd = Command.make(
 			}
 
 			yield* Console.log(`Downloading v${latest}...`);
-			yield* replaceBinary(target);
+			yield* replaceBinary(target, assetUrl);
 			yield* Console.log(`Updated to v${latest} (${target}).`);
 		}),
 ).pipe(Command.withDescription(DESCRIPTION));

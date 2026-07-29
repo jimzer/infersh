@@ -18,12 +18,16 @@ export const isDev = (version: string = VERSION): boolean => version === "dev";
 /** GitHub repository releases are published from. */
 export const REPO = "jimzer/infersh";
 
-/** The permanent "latest asset" URL — no API call, no token, no tag parsing. */
-export const LATEST_ASSET_URL = `https://github.com/${REPO}/releases/latest/download/infer.js`;
+/** Name of the bundle attached to every release. */
+export const ASSET_NAME = "infer.js";
 
-const LATEST_RELEASE_API = `https://api.github.com/repos/${REPO}/releases/latest`;
-
-export { LATEST_RELEASE_API };
+/**
+ * Releases are resolved through the API rather than the
+ * `releases/latest/download/...` shortcut: that redirect is CDN-cached and
+ * keeps serving the previous release's asset for some minutes after a new
+ * one is published.
+ */
+export const LATEST_RELEASE_API = `https://api.github.com/repos/${REPO}/releases/latest`;
 
 /** Strips a leading `v` so `v1.2.3` and `1.2.3` compare equal. */
 export const normalize = (version: string): string =>
