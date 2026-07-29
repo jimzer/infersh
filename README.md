@@ -113,6 +113,19 @@ infer groq transcribe --url https://example.com/long.mp3  # files over 25 MB
 
 Audio is converted to 16 kHz mono FLAC with ffmpeg before upload — the same downsampling Groq applies server-side, so there is no accuracy cost. It roughly halves the file and accepts anything ffmpeg can read, not just Groq's own format list. Pass `--no-optimize` to send the file untouched.
 
+### Skills
+
+```bash
+infer skills add     # install the agent skill into this project
+infer skills list    # show what is installed and where
+```
+
+Writes a skill into `.claude/skills/infer` teaching an agent how to drive this CLI — the composition contract, the `--frame` iterate-then-encode loop, fal's discover-before-run order, which flags bound a billed quantity. It is a short `SKILL.md` pointing into `references/`, so only the relevant part is read.
+
+Placement: uses `.claude` in the current directory if there is one; offers to create one when nothing is found; and when a project exists further up, asks whether to use it or start here. `--yes` takes the default without asking (implied when there is no terminal), and `--here` forces the current directory.
+
+The skill ships inside the binary, so this works offline and `infer update` brings a newer skill with it.
+
 ### Keys
 
 ```bash

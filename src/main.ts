@@ -11,11 +11,13 @@ import { falCmd } from "./commands/fal.ts";
 import { groqCmd } from "./commands/groq.ts";
 import { keysCmd } from "./commands/keys.ts";
 import { renderCmd } from "./commands/render.ts";
+import { skillsCmd } from "./commands/skills.ts";
 import { updateCmd } from "./commands/update.ts";
 import * as Fal from "./fal.ts";
 import * as Groq from "./groq.ts";
 import * as Render from "./render.ts";
 import * as Secrets from "./secrets.ts";
+import * as Skills from "./skills.ts";
 import { VERSION } from "./version.ts";
 
 // Secrets and the HTTP client are needed both directly by commands and by the
@@ -32,6 +34,7 @@ const appLayer = Layer.mergeAll(
 	Groq.layer.pipe(Layer.provide(base)),
 	Bdata.layer.pipe(Layer.provide(base)),
 	Render.layer,
+	Skills.layer,
 );
 
 const inferCmd = Command.make("infer").pipe(
@@ -42,6 +45,7 @@ const inferCmd = Command.make("infer").pipe(
 		groqCmd,
 		keysCmd,
 		renderCmd,
+		skillsCmd,
 		updateCmd,
 	]),
 );
