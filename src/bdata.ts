@@ -6,12 +6,29 @@
  * the same things the SDK would, but earlier and with a clearer message.
  */
 
-import { Context, Data, Effect, Layer, Option, Redacted } from "effect";
+import {
+	Console,
+	Context,
+	Data,
+	Effect,
+	Layer,
+	Option,
+	Redacted,
+	Schedule,
+} from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { MissingKeyError, Secrets } from "./secrets.ts";
 
 /** Every unlocker and SERP call goes through this one endpoint. */
 const REQUEST_URL = "https://api.brightdata.com/request";
+
+/** Web Scraper API: dataset-backed collection and discovery. */
+const DATASET_SCRAPE_URL = "https://api.brightdata.com/datasets/v3/scrape";
+const DATASET_PROGRESS_URL = "https://api.brightdata.com/datasets/v3/progress";
+const DATASET_SNAPSHOT_URL = "https://api.brightdata.com/datasets/v3/snapshot";
+
+/** YouTube videos dataset — backs both collect-by-URL and discover-by-keyword. */
+export const YOUTUBE_VIDEOS_DATASET = "gd_lk56epmy2i5g7lzu0k";
 
 /** Zone names the Bright Data SDK creates and uses by default. */
 export const DEFAULT_UNLOCKER_ZONE = "sdk_unlocker";
@@ -189,6 +206,14 @@ export interface BdataShape {
 		queries: ReadonlyArray<string>,
 		options: SearchOptions,
 	) => Effect.Effect<unknown, BdataError>;
+	/**
+	 * Run a Web Scraper API dataset job, polling to completion when the API
+	 * defers the work.
+	 */
+	readonly datasetScrape: (
+		params: DatasetScrapeParams,
+		input: ReadonlyArray<Record<string, unknown>>,
+	) => Effect.Effect<unknown, BdataError>;
 }
 
 export class Bdata extends Context.Service<Bdata, BdataShape>()("Bdata") {}
@@ -244,6 +269,84 @@ const make = (options: {
 			return parseBody(text);
 		});
 
+	const authorized = <A>(
+		run: (key: string) => Effect.Effect<A, BdataError>,
+	): Effect.Effect<A, BdataError> => Effect.flatMap(requireCredentials, run);
+
+	const getJson = (url: string, key: string) =>
+		Effect.gen(function* () {
+			const response = yield* http
+				.get(url, { headers: { Authorization: `Bearer ${key}` } })
+				.pipe(
+					Effect.mapError(
+						(cause) => new BdataError({ reason: `Request failed: ${cause}` }),
+					),
+				);
+			const text = yield* response.text.pipe(
+				Effect.mapError(
+					(cause) =>
+						new BdataError({ reason: `Could not read the response: ${cause}` }),
+				),
+			);
+			if (response.status >= 400) {
+				return yield* Effect.fail(
+					new BdataError({
+						reason: `Bright Data returned ${response.status}: ${text.slice(0, 500)}`,
+					}),
+				);
+			}
+			return parseBody(text);
+		});
+
+	/**
+	 * Waits for a deferred job, then downloads it.
+	 *
+	 * Discovery runs can take minutes, so this polls every 10 seconds for up to
+	 * 10 minutes and reports progress on stderr to keep stdout pure JSON.
+	 */
+	const pollAndDownload = (snapshotId: string, key: string) =>
+		Effect.gen(function* () {
+			yield* Console.error(`Polling snapshot ${snapshotId}...`);
+
+			const check = Effect.gen(function* () {
+				const status = (yield* getJson(
+					`${DATASET_PROGRESS_URL}/${snapshotId}`,
+					key,
+				)) as { status?: string };
+				if (status.status === "ready" || status.status === "failed") {
+					return status;
+				}
+				yield* Console.error(`  status: ${status.status ?? "unknown"}`);
+				return yield* Effect.fail("pending" as const);
+			});
+
+			const final = yield* check.pipe(
+				Effect.retry(
+					Schedule.spaced("10 seconds").pipe(
+						Schedule.upTo({ duration: "10 minutes" }),
+					),
+				),
+				Effect.mapError(
+					(cause): BdataError =>
+						typeof cause === "string"
+							? new BdataError({
+									reason: `Snapshot ${snapshotId} was still running after 10 minutes.\nCheck it later with the snapshot ID above.`,
+								})
+							: cause,
+				),
+			);
+
+			if (final.status === "failed") {
+				return yield* Effect.fail(
+					new BdataError({ reason: `Snapshot ${snapshotId} failed.` }),
+				);
+			}
+			return yield* getJson(
+				`${DATASET_SNAPSHOT_URL}/${snapshotId}?format=json`,
+				key,
+			);
+		});
+
 	/** One result for a single target, an array for several — like the SDK. */
 	const runAll = (
 		bodies: ReadonlyArray<Record<string, unknown>>,
@@ -279,6 +382,60 @@ const make = (options: {
 				),
 				opts.concurrency ?? 10,
 			),
+
+		datasetScrape: (params, input) =>
+			authorized((key) =>
+				Effect.gen(function* () {
+					const url = `${DATASET_SCRAPE_URL}?${datasetScrapeQuery(params)}`;
+					const response = yield* http
+						.execute(
+							HttpClientRequest.post(url, {
+								headers: {
+									Authorization: `Bearer ${key}`,
+									"Content-Type": "application/json",
+								},
+							}).pipe(HttpClientRequest.bodyJsonUnsafe({ input })),
+						)
+						.pipe(
+							Effect.mapError(
+								(cause) =>
+									new BdataError({ reason: `Request failed: ${cause}` }),
+							),
+						);
+
+					const text = yield* response.text.pipe(
+						Effect.mapError(
+							(cause) =>
+								new BdataError({
+									reason: `Could not read the response: ${cause}`,
+								}),
+						),
+					);
+
+					// 202 means the work was deferred to a snapshot rather than run
+					// inline, which is the normal path for discovery.
+					if (response.status === 202) {
+						const body = parseBody(text) as { snapshot_id?: string };
+						if (!body.snapshot_id) {
+							return yield* Effect.fail(
+								new BdataError({
+									reason: `Bright Data deferred the job but returned no snapshot id: ${text.slice(0, 300)}`,
+								}),
+							);
+						}
+						return yield* pollAndDownload(body.snapshot_id, key);
+					}
+
+					if (response.status >= 400) {
+						return yield* Effect.fail(
+							new BdataError({
+								reason: `Bright Data returned ${response.status}: ${text.slice(0, 500)}`,
+							}),
+						);
+					}
+					return parseBody(text);
+				}),
+			),
 	};
 };
 
@@ -296,3 +453,70 @@ export const layer: Layer.Layer<Bdata, never, Secrets | HttpClient.HttpClient> =
 			});
 		}),
 	);
+
+// --- Web Scraper API (datasets) -------------------------------------------
+
+export interface DatasetScrapeParams {
+	readonly datasetId: string;
+	/** `discover_new` turns a collect request into a discovery run. */
+	readonly type?: string;
+	/** What the input keys mean when discovering, e.g. `keyword`. */
+	readonly discoverBy?: string;
+	readonly limitPerInput?: number;
+	readonly includeErrors?: boolean;
+}
+
+/** Query string for `/datasets/v3/scrape`. */
+export const datasetScrapeQuery = (params: DatasetScrapeParams): string => {
+	const query = new URLSearchParams({ dataset_id: params.datasetId });
+	// Errors are included by default so a partly-failed batch still explains
+	// itself instead of silently returning fewer rows.
+	query.set("include_errors", String(params.includeErrors ?? true));
+	if (params.type) query.set("type", params.type);
+	if (params.discoverBy) query.set("discover_by", params.discoverBy);
+	if (params.limitPerInput !== undefined) {
+		query.set("limit_per_input", String(params.limitPerInput));
+	}
+	return query.toString();
+};
+
+export interface VideoInputOptions {
+	readonly country?: string;
+	readonly transcriptionLanguage?: string;
+}
+
+/** Input rows for collecting YouTube videos by URL. */
+export const videoInput = (
+	urls: ReadonlyArray<string>,
+	options: VideoInputOptions,
+): ReadonlyArray<Record<string, unknown>> =>
+	urls.map((url) => {
+		const row: Record<string, unknown> = { url };
+		if (options.country) row.country = options.country;
+		if (options.transcriptionLanguage) {
+			row.transcription_language = options.transcriptionLanguage;
+		}
+		return row;
+	});
+
+export interface DiscoverInputOptions {
+	readonly numOfPosts?: number;
+	readonly startDate?: string;
+	readonly endDate?: string;
+	readonly country?: string;
+}
+
+/** Input rows for discovering YouTube videos by keyword. */
+export const discoverInput = (
+	keywords: ReadonlyArray<string>,
+	options: DiscoverInputOptions,
+): ReadonlyArray<Record<string, unknown>> =>
+	keywords.map((keyword) => {
+		const row: Record<string, unknown> = { keyword };
+		// Omitted rather than zeroed: the API reads a missing value as no limit.
+		if (options.numOfPosts !== undefined) row.num_of_posts = options.numOfPosts;
+		if (options.startDate) row.start_date = options.startDate;
+		if (options.endDate) row.end_date = options.endDate;
+		if (options.country) row.country = options.country;
+		return row;
+	});

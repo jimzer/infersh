@@ -67,6 +67,9 @@ infer bdata scrape https://example.com --format json | jq       # structured
 infer bdata scrape https://a.com https://b.com                  # batch, in parallel
 infer bdata search "pizza restaurants" --format json            # Google SERP
 infer bdata search "pizza" --engine bing --country gb
+
+infer bdata youtube video https://youtu.be/dQw4w9WgXcQ          # full video metadata
+infer bdata youtube discover "ai tools" --num-of-posts 20       # find videos by keyword
 ```
 
 Options can be passed either as flags or as one JSON object via `--input` — unknown keys are rejected rather than silently ignored.

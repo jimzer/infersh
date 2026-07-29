@@ -48,6 +48,15 @@ is the default `html`. They are unit tested against those rules.
 Default zones match the SDK's: `sdk_unlocker` for scraping, `sdk_serp` for
 search.
 
+Going direct also lifts a ceiling. The SDK's `youtube.ts` exposes only three
+URL-based collectors and no keyword discovery — discovery is reachable there
+only through the generic `discoverBy` / `type: 'discover_new'` options. Against
+the Web Scraper API the same call is explicit: `POST /datasets/v3/scrape` with
+`type=discover_new&discover_by=keyword`. That endpoint answers inline when it
+can and returns `202` with a `snapshot_id` when it cannot, so the client polls
+`/datasets/v3/progress/<id>` and then downloads `/datasets/v3/snapshot/<id>`.
+Discovery almost always takes the deferred path.
+
 The SDK remains a useful reference. Keeping the repository checked out is
 worthwhile when the wire format needs verifying:
 

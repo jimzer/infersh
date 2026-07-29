@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
 	buildSerpUrl,
+	datasetScrapeQuery,
+	discoverInput,
 	mergeOptions,
 	parseBody,
 	parseInput,
 	renderResult,
 	requestBody,
+	videoInput,
 } from "./bdata.ts";
 
 const ALLOWED = ["country", "dataFormat", "format", "numResults"] as const;
@@ -187,5 +190,90 @@ describe("parseBody", () => {
 
 	test("leaves malformed JSON as text rather than throwing", () => {
 		expect(parseBody('{"a":')).toBe('{"a":');
+	});
+});
+
+describe("datasetScrapeQuery", () => {
+	test("always sends the dataset and include_errors", () => {
+		expect(datasetScrapeQuery({ datasetId: "gd_x" })).toBe(
+			"dataset_id=gd_x&include_errors=true",
+		);
+	});
+
+	test("adds the discovery params only when discovering", () => {
+		const query = datasetScrapeQuery({
+			datasetId: "gd_x",
+			type: "discover_new",
+			discoverBy: "keyword",
+			limitPerInput: 20,
+		});
+		expect(query).toContain("type=discover_new");
+		expect(query).toContain("discover_by=keyword");
+		expect(query).toContain("limit_per_input=20");
+	});
+
+	test("include_errors can be turned off explicitly", () => {
+		expect(
+			datasetScrapeQuery({ datasetId: "gd_x", includeErrors: false }),
+		).toBe("dataset_id=gd_x&include_errors=false");
+	});
+});
+
+describe("videoInput", () => {
+	test("wraps each url in its own row", () => {
+		expect(videoInput(["https://a", "https://b"], {})).toEqual([
+			{ url: "https://a" },
+			{ url: "https://b" },
+		]);
+	});
+
+	test("adds optional fields under the API's snake_case names", () => {
+		expect(
+			videoInput(["https://a"], {
+				country: "us",
+				transcriptionLanguage: "English",
+			}),
+		).toEqual([
+			{ url: "https://a", country: "us", transcription_language: "English" },
+		]);
+	});
+});
+
+describe("discoverInput", () => {
+	test("wraps each keyword in its own row", () => {
+		expect(discoverInput(["pizza", "sushi"], {})).toEqual([
+			{ keyword: "pizza" },
+			{ keyword: "sushi" },
+		]);
+	});
+
+	test("maps options to the API's field names", () => {
+		expect(
+			discoverInput(["pizza"], {
+				numOfPosts: 20,
+				startDate: "2026-01-01",
+				endDate: "2026-02-01",
+				country: "gb",
+			}),
+		).toEqual([
+			{
+				keyword: "pizza",
+				num_of_posts: 20,
+				start_date: "2026-01-01",
+				end_date: "2026-02-01",
+				country: "gb",
+			},
+		]);
+	});
+
+	test("omits num_of_posts when unset, since missing means no limit", () => {
+		const [row] = discoverInput(["pizza"], {});
+		expect(Object.hasOwn(row ?? {}, "num_of_posts")).toBe(false);
+	});
+
+	test("keeps an explicit zero rather than dropping it as falsy", () => {
+		expect(discoverInput(["pizza"], { numOfPosts: 0 })[0]).toMatchObject({
+			num_of_posts: 0,
+		});
 	});
 });

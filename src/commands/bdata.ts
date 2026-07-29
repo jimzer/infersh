@@ -8,6 +8,7 @@ import {
 	Bdata,
 	BdataError,
 	DATA_FORMATS,
+	discoverInput,
 	FORMATS,
 	METHODS,
 	mergeOptions,
@@ -15,6 +16,8 @@ import {
 	renderResult,
 	SEARCH_ENGINES,
 	type SearchEngine,
+	videoInput,
+	YOUTUBE_VIDEOS_DATASET,
 } from "../bdata.ts";
 
 const SCRAPE_KEYS = [
@@ -270,6 +273,174 @@ BRIGHTDATA_API_KEY.`,
 	]),
 );
 
+// --- youtube --------------------------------------------------------------
+
+const videoCmd = Command.make(
+	"video",
+	{
+		urls: Argument.string("url").pipe(
+			Argument.atLeast(1),
+			Argument.withDescription(
+				"One or more YouTube video URLs. All are collected in a single request.",
+			),
+		),
+		country: Flag.string("country").pipe(
+			Flag.withMetavar("cc"),
+			Flag.optional,
+			Flag.withDescription(
+				"Two-letter country code to fetch from, affecting availability and localised fields.",
+			),
+		),
+		transcriptionLanguage: Flag.string("transcription-language").pipe(
+			Flag.withMetavar("lang"),
+			Flag.optional,
+			Flag.withDescription(
+				"Language for the returned transcript, e.g. English. Omit to use the video's own.",
+			),
+		),
+	},
+	(config) =>
+		Effect.gen(function* () {
+			const bdata = yield* Bdata;
+			const result = yield* bdata.datasetScrape(
+				{ datasetId: YOUTUBE_VIDEOS_DATASET },
+				videoInput(config.urls, {
+					country: Option.getOrUndefined(config.country),
+					transcriptionLanguage: Option.getOrUndefined(
+						config.transcriptionLanguage,
+					),
+				}),
+			);
+			yield* Console.log(renderResult(result));
+		}),
+).pipe(
+	Command.withShortDescription("Collect metadata for YouTube videos by URL."),
+	Command.withDescription(
+		`Collect full metadata for one or more YouTube videos.
+
+Returns structured records with title, channel, view and like counts,
+duration, publish date, description, tags, thumbnail, subscriber count
+and the transcript.
+
+Usually answers inline. Longer jobs are deferred to a snapshot, which
+is then polled automatically; progress goes to stderr so stdout stays
+pure JSON.`,
+	),
+	Command.withExamples([
+		{
+			command:
+				"infer bdata youtube video https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+			description: "Collect one video's metadata",
+		},
+		{
+			command:
+				"infer bdata youtube video https://youtu.be/a https://youtu.be/b | jq '.[].title'",
+			description: "Collect several and pull out the titles",
+		},
+		{
+			command:
+				"infer bdata youtube video https://youtu.be/a --transcription-language English",
+			description: "Request the transcript in a given language",
+		},
+	]),
+);
+
+const discoverCmd = Command.make(
+	"discover",
+	{
+		keywords: Argument.string("keyword").pipe(
+			Argument.atLeast(1),
+			Argument.withDescription(
+				"One or more search keywords. Each is discovered independently.",
+			),
+		),
+		numOfPosts: Flag.integer("num-of-posts").pipe(
+			Flag.withMetavar("n"),
+			Flag.optional,
+			Flag.withDescription(
+				"Maximum videos to collect per keyword. Omit for no limit, which can be slow and expensive.",
+			),
+		),
+		startDate: Flag.string("start-date").pipe(
+			Flag.withMetavar("date"),
+			Flag.optional,
+			Flag.withDescription(
+				"Only include videos published on or after this date, e.g. 2026-01-01.",
+			),
+		),
+		endDate: Flag.string("end-date").pipe(
+			Flag.withMetavar("date"),
+			Flag.optional,
+			Flag.withDescription(
+				"Only include videos published on or before this date.",
+			),
+		),
+		country: Flag.string("country").pipe(
+			Flag.withMetavar("cc"),
+			Flag.optional,
+			Flag.withDescription(
+				"Two-letter country code to search from, changing which results are surfaced.",
+			),
+		),
+	},
+	(config) =>
+		Effect.gen(function* () {
+			const bdata = yield* Bdata;
+			const result = yield* bdata.datasetScrape(
+				{
+					datasetId: YOUTUBE_VIDEOS_DATASET,
+					type: "discover_new",
+					discoverBy: "keyword",
+				},
+				discoverInput(config.keywords, {
+					numOfPosts: Option.getOrUndefined(config.numOfPosts),
+					startDate: Option.getOrUndefined(config.startDate),
+					endDate: Option.getOrUndefined(config.endDate),
+					country: Option.getOrUndefined(config.country),
+				}),
+			);
+			yield* Console.log(renderResult(result));
+		}),
+).pipe(
+	Command.withShortDescription("Find YouTube videos by keyword."),
+	Command.withDescription(
+		`Discover YouTube videos matching a keyword search.
+
+Returns the same records as \`video\`, but found by searching rather
+than by URL.
+
+Discovery is queued rather than answered inline: the job is polled
+every 10 seconds for up to 10 minutes, with progress on stderr. Pass
+--num-of-posts to keep runs short, since an unbounded keyword can
+collect a very large number of videos.`,
+	),
+	Command.withExamples([
+		{
+			command: `infer bdata youtube discover "artificial intelligence tools" --num-of-posts 20`,
+			description: "Find 20 videos for a keyword",
+		},
+		{
+			command: `infer bdata youtube discover "effect ts" --start-date 2026-01-01 --num-of-posts 50`,
+			description: "Restrict discovery to recent videos",
+		},
+		{
+			command: `infer bdata youtube discover "pizza" "sushi" --num-of-posts 10 | jq '.[].url'`,
+			description: "Discover for several keywords and list the URLs",
+		},
+	]),
+);
+
+const youtubeCmd = Command.make("youtube").pipe(
+	Command.withShortDescription("Collect and discover YouTube videos."),
+	Command.withDescription(
+		`YouTube data via Bright Data's Web Scraper API.
+
+\`video\` collects known URLs; \`discover\` finds videos by keyword. Both
+return the same record shape, so their output is interchangeable.`,
+	),
+	Command.withSubcommands([videoCmd, discoverCmd]),
+);
+
 export const bdataCmd = Command.make("bdata").pipe(
 	Command.withShortDescription("Scrape the web and query search engines."),
 	Command.withDescription(
@@ -279,5 +450,5 @@ Both subcommands accept several targets at once and process them in
 parallel, and both take their options either as flags or as one JSON
 object via --input.`,
 	),
-	Command.withSubcommands([scrapeCmd, searchCmd]),
+	Command.withSubcommands([scrapeCmd, searchCmd, youtubeCmd]),
 );
