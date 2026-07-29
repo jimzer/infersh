@@ -26,6 +26,26 @@ infer update --check  # just report whether one is available
 
 ## Usage
 
+### fal.ai
+
+```bash
+infer fal models --q "text to image"        # search models
+infer fal models --category image-to-video  # filter by category
+infer fal schema fal-ai/flux/dev            # a model's input schema, $refs resolved
+infer fal run fal-ai/flux/schnell --input '{"prompt":"a red apple"}'
+infer fal cdn ./cat.png                     # upload to the fal CDN, print the URL
+```
+
+Any value in `--input` that is a path to an existing local file is uploaded to the fal CDN and replaced by its URL — at any depth, whatever the field is called. The mapping is printed to stderr, so `infer fal run … | jq` gets clean JSON:
+
+```bash
+infer fal run fal-ai/flux/dev/image-to-image \
+  --input '{"prompt":"make it snowy","image_url":"./photo.jpg"}'
+# uploaded ./photo.jpg -> https://v3b.fal.media/files/b/...
+```
+
+### Keys
+
 ```bash
 infer keys set     # prompt for each provider API key (masked)
 infer keys list    # show which keys are set, masked, and where they resolve from

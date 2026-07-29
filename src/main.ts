@@ -3,7 +3,9 @@
 import { BunServices } from "@effect/platform-bun";
 import { Console, Effect } from "effect";
 import { Command } from "effect/unstable/cli";
+import { FetchHttpClient } from "effect/unstable/http";
 import { runUpdateCheck } from "./autoupdate.ts";
+import { falCmd } from "./commands/fal.ts";
 import { keysCmd } from "./commands/keys.ts";
 import { updateCmd } from "./commands/update.ts";
 import * as Secrets from "./secrets.ts";
@@ -11,7 +13,7 @@ import { VERSION } from "./version.ts";
 
 const inferCmd = Command.make("infer").pipe(
 	Command.withDescription("Run inference providers from the command line."),
-	Command.withSubcommands([keysCmd, updateCmd]),
+	Command.withSubcommands([falCmd, keysCmd, updateCmd]),
 );
 
 // `runWith` already absorbs the QuitError raised when a prompt is cancelled,
@@ -23,6 +25,7 @@ const exitCode = await Command.runWith(inferCmd, { version: VERSION })(
 	Effect.as(0),
 	Effect.catch((error) => Console.error(error.message).pipe(Effect.as(1))),
 	Effect.provide(Secrets.layer),
+	Effect.provide(FetchHttpClient.layer),
 	Effect.provide(BunServices.layer),
 	Effect.runPromise,
 );
