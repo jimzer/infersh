@@ -12,10 +12,8 @@ import {
 	Secrets,
 } from "../secrets.ts";
 
-// Effect CLI reuses the full description in the parent's subcommand listing,
-// so keep it to one line or `infer keys --help` turns into a wall of text.
-const SET_DESCRIPTION =
-	"Prompt for each provider API key (masked) and store it in the OS credential store.";
+// `withShortDescription` is what the parent's subcommand listing shows, so
+// `withDescription` is free to be as long as it needs to be.
 
 const setCmd = Command.make("set", {}, () =>
 	Effect.gen(function* () {
@@ -54,7 +52,26 @@ const setCmd = Command.make("set", {}, () =>
 			yield* Console.log(`  saved ${info.label} key`);
 		}
 	}),
-).pipe(Command.withDescription(SET_DESCRIPTION));
+).pipe(
+	Command.withShortDescription("Store each provider API key, interactively."),
+	Command.withDescription(
+		`Prompt for each provider API key and save it to the OS credential store.
+
+Input is masked as you type. Leaving a prompt blank keeps whatever is
+already stored, so you can update one key without retyping the others.
+
+Keys are held in the macOS Keychain, libsecret on Linux, or the Windows
+Credential Manager — never on disk in plain text. A provider whose key
+is already supplied by an environment variable is skipped, because that
+variable would take precedence anyway.`,
+	),
+	Command.withExamples([
+		{
+			command: "infer keys set",
+			description: "Set or update every provider key",
+		},
+	]),
+);
 
 const listCmd = Command.make("list", {}, () =>
 	Effect.gen(function* () {
@@ -84,14 +101,32 @@ const listCmd = Command.make("list", {}, () =>
 		}
 	}),
 ).pipe(
+	Command.withShortDescription("Show which provider keys are set."),
 	Command.withDescription(
-		"Show which provider keys are set, masked, and where each one resolves from.",
+		`List each provider key, masked, with where it resolves from.
+
+The source is either \`env\` or \`keychain\`. An environment variable wins
+over a stored key, so this is the quickest way to see which value a
+command will actually use.
+
+On a machine with no credential store — a container, a headless server,
+some WSL setups — only environment variables can be read, and that is
+reported rather than treated as an error.`,
 	),
+	Command.withExamples([
+		{ command: "infer keys list", description: "Show every provider key" },
+	]),
 );
 
 const rmCmd = Command.make(
 	"rm",
-	{ provider: Argument.choice("provider", providerIds) },
+	{
+		provider: Argument.choice("provider", providerIds).pipe(
+			Argument.withDescription(
+				"Which provider's key to delete. Only the stored key is removed; an environment variable of the same name is untouched.",
+			),
+		),
+	},
 	(config) =>
 		Effect.gen(function* () {
 			const secrets = yield* Secrets;
@@ -102,10 +137,34 @@ const rmCmd = Command.make(
 			);
 		}),
 ).pipe(
-	Command.withDescription("Delete a stored key from the OS credential store."),
+	Command.withShortDescription("Delete a stored provider key."),
+	Command.withDescription(
+		`Remove one provider's key from the OS credential store.
+
+Reports whether anything was actually deleted, so running it twice is
+harmless. This cannot remove a key that comes from an environment
+variable — unset that in your shell instead.`,
+	),
+	Command.withExamples([
+		{
+			command: "infer keys rm fal",
+			description: "Forget the stored fal.ai key",
+		},
+	]),
 );
 
 export const keysCmd = Command.make("keys").pipe(
-	Command.withDescription("Manage provider API keys."),
+	Command.withShortDescription("Manage provider API keys."),
+	Command.withDescription(
+		`Manage the provider API keys held in the OS credential store.
+
+Keys resolve from the environment first and the credential store
+second, so a shell or CI job can override a stored key without
+replacing it:
+
+  fal         FAL_KEY
+  brightdata  BRIGHTDATA_API_KEY
+  groq        GROQ_API_KEY`,
+	),
 	Command.withSubcommands([setCmd, listCmd, rmCmd]),
 );

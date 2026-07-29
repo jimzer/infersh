@@ -8,11 +8,19 @@
 
 import { mkdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { fal } from "@fal-ai/client";
+import { createFalClient, type FalClient } from "@fal-ai/client";
 import { dereference } from "@readme/openapi-parser";
-import { Console, Data, Effect, Option, Redacted } from "effect";
+import {
+	Console,
+	Context,
+	Data,
+	Effect,
+	Layer,
+	Option,
+	Redacted,
+} from "effect";
 import { HttpClient } from "effect/unstable/http";
-import { Secrets } from "./secrets.ts";
+import { MissingKeyError, Secrets } from "./secrets.ts";
 
 const PLATFORM_API = "https://api.fal.ai/v1";
 const SPEC_URL = "https://fal.ai/api/openapi/queue/openapi.json";
@@ -24,27 +32,6 @@ export class FalError extends Data.TaggedError("FalError")<{
 		return this.reason;
 	}
 }
-
-// --- Authentication -------------------------------------------------------
-
-/**
- * Points the fal client at the stored key. Required for running models and
- * uploading; model search works unauthenticated but is rate limited.
- */
-export const configureClient = Effect.gen(function* () {
-	const secrets = yield* Secrets;
-	const key = yield* secrets.require("fal");
-	fal.config({ credentials: Redacted.value(key) });
-});
-
-/** The key if we have one, ignoring "not set" — search tolerates anonymity. */
-const optionalKey = Effect.gen(function* () {
-	const secrets = yield* Secrets;
-	const resolved = yield* secrets
-		.get("fal")
-		.pipe(Effect.orElseSucceed(Option.none));
-	return Option.map(resolved, (r) => Redacted.value(r.key));
-});
 
 // --- Model search ---------------------------------------------------------
 
@@ -87,50 +74,6 @@ export const searchQuery = (params: SearchParams): string => {
 	for (const field of params.expand) query.append("expand", field);
 	return query.toString();
 };
-
-export const searchModels = (
-	params: SearchParams,
-): Effect.Effect<
-	ModelSearchResult,
-	FalError,
-	Secrets | HttpClient.HttpClient
-> =>
-	Effect.gen(function* () {
-		const key = yield* optionalKey;
-		const query = searchQuery(params);
-		const url = `${PLATFORM_API}/models${query ? `?${query}` : ""}`;
-
-		const response = yield* HttpClient.get(url, {
-			headers: {
-				Accept: "application/json",
-				...(Option.isSome(key) ? { Authorization: `Key ${key.value}` } : {}),
-			},
-		}).pipe(
-			Effect.mapError(
-				(cause) => new FalError({ reason: `Model search failed: ${cause}` }),
-			),
-		);
-
-		const body = yield* response.json.pipe(
-			Effect.mapError(
-				(cause) =>
-					new FalError({
-						reason: `Could not read the search response: ${cause}`,
-					}),
-			),
-		);
-
-		if (response.status >= 400) {
-			const detail = (body as { error?: { message?: string } })?.error?.message;
-			return yield* Effect.fail(
-				new FalError({
-					reason: `Model search failed (${response.status}): ${detail ?? JSON.stringify(body)}`,
-				}),
-			);
-		}
-
-		return body as unknown as ModelSearchResult;
-	});
 
 // --- Model schema ---------------------------------------------------------
 
@@ -177,18 +120,6 @@ export const extractInputSchema = (spec: unknown): InputSchema | null => {
 
 export const specUrl = (endpointId: string): string =>
 	`${SPEC_URL}?endpoint_id=${encodeURIComponent(endpointId)}`;
-
-/** Fetches a model's OpenAPI document with every `$ref` resolved inline. */
-export const fetchSpec = (
-	endpointId: string,
-): Effect.Effect<unknown, FalError> =>
-	Effect.tryPromise({
-		try: () => dereference(specUrl(endpointId)),
-		catch: (cause) =>
-			new FalError({
-				reason: `Could not fetch the schema for ${endpointId}: ${cause}`,
-			}),
-	});
 
 // --- Local asset uploading ------------------------------------------------
 
@@ -244,58 +175,6 @@ export const substitute = (
 	}
 	return input;
 };
-
-/**
- * Uploads a single file and returns its CDN URL.
- *
- * The blob is renamed to the file's basename first: `Bun.file()` carries the
- * whole path as its name, and fal bakes that name into the CDN URL, which
- * would otherwise leak the full local directory structure into a public link.
- */
-export const uploadFile = (path: string): Effect.Effect<string, FalError> =>
-	Effect.tryPromise({
-		try: async () => {
-			const file = Bun.file(path);
-			if (!(await file.exists())) throw new Error("file not found");
-			const named = new File([await file.arrayBuffer()], basename(path), {
-				type: file.type,
-			});
-			return fal.storage.upload(named);
-		},
-		catch: (cause) =>
-			new FalError({ reason: `Could not upload ${path}: ${cause}` }),
-	});
-
-/**
- * Finds local file paths anywhere in the payload, uploads them, and returns
- * the payload with those paths replaced by CDN URLs.
- */
-export const resolveAssets = (
-	input: unknown,
-): Effect.Effect<unknown, FalError> =>
-	Effect.gen(function* () {
-		const candidates = yield* Effect.tryPromise({
-			try: async () => {
-				const existing: string[] = [];
-				for (const value of collectCandidates(input)) {
-					if (await Bun.file(value).exists()) existing.push(value);
-				}
-				return existing;
-			},
-			catch: (cause) =>
-				new FalError({ reason: `Could not inspect input files: ${cause}` }),
-		});
-
-		if (candidates.length === 0) return input;
-
-		const uploads = new Map<string, string>();
-		for (const path of candidates) {
-			const url = yield* uploadFile(path);
-			uploads.set(path, url);
-			yield* Console.error(`uploaded ${path} -> ${url}`);
-		}
-		return substitute(input, uploads);
-	});
 
 // --- Saving output assets -------------------------------------------------
 
@@ -385,109 +264,265 @@ export const outputPaths = (
 		return numbered(target, index);
 	});
 
-/** Downloads one asset and writes it to `path`, creating parent directories. */
-export const downloadTo = (
-	url: string,
-	path: string,
-): Effect.Effect<void, FalError, HttpClient.HttpClient> =>
-	Effect.gen(function* () {
-		const response = yield* HttpClient.get(url).pipe(
-			Effect.mapError(
-				(cause) =>
-					new FalError({ reason: `Could not download ${url}: ${cause}` }),
-			),
-		);
-		if (response.status >= 400) {
-			return yield* Effect.fail(
-				new FalError({
-					reason: `Could not download ${url}: ${response.status}`,
-				}),
-			);
-		}
-		const bytes = yield* response.arrayBuffer.pipe(
-			Effect.mapError(
-				(cause) => new FalError({ reason: `Could not read ${url}: ${cause}` }),
-			),
-		);
-		yield* Effect.tryPromise({
-			try: async () => {
-				mkdirSync(dirname(path), { recursive: true });
-				await Bun.write(path, bytes);
-			},
-			catch: (cause) =>
-				new FalError({ reason: `Could not write ${path}: ${cause}` }),
-		});
-	});
-
-/**
- * Writes every asset in the model output to disk and returns the paths.
- * Fails loudly when the model produced nothing downloadable — silently
- * writing no files would look like success.
- */
-export const saveOutputs = (
-	output: unknown,
-	target: string,
-): Effect.Effect<ReadonlyArray<string>, FalError, HttpClient.HttpClient> =>
-	Effect.gen(function* () {
-		const assets = collectOutputAssets(output);
-		if (assets.length === 0) {
-			return yield* Effect.fail(
-				new FalError({
-					reason:
-						"The model returned no downloadable asset, so --output has nothing to write.\nRe-run without --output to see the raw result.",
-				}),
-			);
-		}
-
-		const isDirectory = yield* Effect.sync(() => {
-			if (target.endsWith("/")) return true;
-			try {
-				return statSync(target).isDirectory();
-			} catch {
-				return false;
-			}
-		});
-
-		const paths = outputPaths(target, assets, isDirectory);
-		for (const [index, asset] of assets.entries()) {
-			const path = paths[index];
-			if (path === undefined) continue;
-			yield* downloadTo(asset.url, path);
-		}
-		return paths;
-	});
-
-// --- Running a model ------------------------------------------------------
-
-export const runModel = (
-	endpointId: string,
-	input: unknown,
-): Effect.Effect<unknown, FalError> =>
-	Effect.tryPromise({
-		try: () =>
-			fal.subscribe(endpointId, {
-				input: input as Record<string, unknown>,
-				logs: true,
-				onQueueUpdate: (update) => {
-					if (update.status === "IN_QUEUE") {
-						process.stderr.write("[queue] waiting...\n");
-					}
-					if (update.status === "IN_PROGRESS") {
-						for (const log of update.logs ?? []) {
-							process.stderr.write(`${log.message}\n`);
-						}
-					}
-				},
-			}),
-		catch: (cause) =>
-			new FalError({
-				reason: `${endpointId} failed: ${describeFalError(cause)}`,
-			}),
-	}).pipe(Effect.map((result) => result.data));
-
 /** fal validation errors carry the useful detail in a nested body. */
 const describeFalError = (cause: unknown): string => {
 	const body = (cause as { body?: { detail?: unknown } })?.body;
 	if (body?.detail) return JSON.stringify(body.detail);
 	return `${cause}`;
 };
+
+// --- The service ----------------------------------------------------------
+
+export interface FalShape {
+	/** Search, list or look up model endpoints on the platform API. */
+	readonly searchModels: (
+		params: SearchParams,
+	) => Effect.Effect<ModelSearchResult, FalError>;
+	/** A model's OpenAPI document, with every `$ref` resolved inline. */
+	readonly fetchSpec: (endpointId: string) => Effect.Effect<unknown, FalError>;
+	/** Upload one local file to the fal CDN, returning its URL. */
+	readonly upload: (path: string) => Effect.Effect<string, FalError>;
+	/** Replace local file paths anywhere in the payload with CDN URLs. */
+	readonly resolveAssets: (input: unknown) => Effect.Effect<unknown, FalError>;
+	/** Run a model to completion, returning its output payload. */
+	readonly run: (
+		endpointId: string,
+		input: unknown,
+	) => Effect.Effect<unknown, FalError>;
+	/** Download every asset in a model output, returning the paths written. */
+	readonly saveOutputs: (
+		output: unknown,
+		target: string,
+	) => Effect.Effect<ReadonlyArray<string>, FalError>;
+}
+
+export class Fal extends Context.Service<Fal, FalShape>()("Fal") {}
+
+const make = (options: {
+	readonly client: FalClient;
+	readonly http: HttpClient.HttpClient;
+	readonly credentials: Option.Option<string>;
+}): FalShape => {
+	const { client, http, credentials } = options;
+
+	/** Anything that spends money or writes to the CDN needs a real key. */
+	const requireCredentials = Option.isSome(credentials)
+		? Effect.succeed(credentials.value)
+		: Effect.fail(
+				new FalError({
+					reason: new MissingKeyError({ provider: "fal" }).message,
+				}),
+			);
+
+	const upload: FalShape["upload"] = (path) =>
+		Effect.gen(function* () {
+			yield* requireCredentials;
+			return yield* Effect.tryPromise({
+				try: async () => {
+					const file = Bun.file(path);
+					if (!(await file.exists())) throw new Error("file not found");
+					// Rename to the basename: Bun.file() carries the whole path as its
+					// name and fal bakes that into the public CDN URL, which would
+					// otherwise publish the local directory structure.
+					const named = new File([await file.arrayBuffer()], basename(path), {
+						type: file.type,
+					});
+					return client.storage.upload(named);
+				},
+				catch: (cause) =>
+					new FalError({ reason: `Could not upload ${path}: ${cause}` }),
+			});
+		});
+
+	const resolveAssets: FalShape["resolveAssets"] = (input) =>
+		Effect.gen(function* () {
+			const existing = yield* Effect.tryPromise({
+				try: async () => {
+					const found: string[] = [];
+					for (const value of collectCandidates(input)) {
+						if (await Bun.file(value).exists()) found.push(value);
+					}
+					return found;
+				},
+				catch: (cause) =>
+					new FalError({ reason: `Could not inspect input files: ${cause}` }),
+			});
+			if (existing.length === 0) return input;
+
+			const uploads = new Map<string, string>();
+			for (const path of existing) {
+				const url = yield* upload(path);
+				uploads.set(path, url);
+				yield* Console.error(`uploaded ${path} -> ${url}`);
+			}
+			return substitute(input, uploads);
+		});
+
+	const download = (url: string, path: string): Effect.Effect<void, FalError> =>
+		Effect.gen(function* () {
+			const response = yield* http
+				.get(url)
+				.pipe(
+					Effect.mapError(
+						(cause) =>
+							new FalError({ reason: `Could not download ${url}: ${cause}` }),
+					),
+				);
+			if (response.status >= 400) {
+				return yield* Effect.fail(
+					new FalError({
+						reason: `Could not download ${url}: ${response.status}`,
+					}),
+				);
+			}
+			const bytes = yield* response.arrayBuffer.pipe(
+				Effect.mapError(
+					(cause) =>
+						new FalError({ reason: `Could not read ${url}: ${cause}` }),
+				),
+			);
+			yield* Effect.tryPromise({
+				try: async () => {
+					mkdirSync(dirname(path), { recursive: true });
+					await Bun.write(path, bytes);
+				},
+				catch: (cause) =>
+					new FalError({ reason: `Could not write ${path}: ${cause}` }),
+			});
+		});
+
+	return {
+		searchModels: (params) =>
+			Effect.gen(function* () {
+				const query = searchQuery(params);
+				const url = `${PLATFORM_API}/models${query ? `?${query}` : ""}`;
+				const response = yield* http
+					.get(url, {
+						headers: {
+							Accept: "application/json",
+							// Optional: search works anonymously, just rate limited.
+							...(Option.isSome(credentials)
+								? { Authorization: `Key ${credentials.value}` }
+								: {}),
+						},
+					})
+					.pipe(
+						Effect.mapError(
+							(cause) =>
+								new FalError({ reason: `Model search failed: ${cause}` }),
+						),
+					);
+
+				const body = yield* response.json.pipe(
+					Effect.mapError(
+						(cause) =>
+							new FalError({
+								reason: `Could not read the search response: ${cause}`,
+							}),
+					),
+				);
+
+				if (response.status >= 400) {
+					const detail = (body as { error?: { message?: string } })?.error
+						?.message;
+					return yield* Effect.fail(
+						new FalError({
+							reason: `Model search failed (${response.status}): ${detail ?? JSON.stringify(body)}`,
+						}),
+					);
+				}
+				return body as unknown as ModelSearchResult;
+			}),
+
+		fetchSpec: (endpointId) =>
+			Effect.tryPromise({
+				try: () => dereference(specUrl(endpointId)),
+				catch: (cause) =>
+					new FalError({
+						reason: `Could not fetch the schema for ${endpointId}: ${cause}`,
+					}),
+			}),
+
+		upload,
+		resolveAssets,
+
+		run: (endpointId, input) =>
+			Effect.gen(function* () {
+				yield* requireCredentials;
+				const result = yield* Effect.tryPromise({
+					try: () =>
+						client.subscribe(endpointId, {
+							input: input as Record<string, unknown>,
+							logs: true,
+							onQueueUpdate: (update) => {
+								if (update.status === "IN_QUEUE") {
+									process.stderr.write("[queue] waiting...\n");
+								}
+								if (update.status === "IN_PROGRESS") {
+									for (const log of update.logs ?? []) {
+										process.stderr.write(`${log.message}\n`);
+									}
+								}
+							},
+						}),
+					catch: (cause) =>
+						new FalError({
+							reason: `${endpointId} failed: ${describeFalError(cause)}`,
+						}),
+				});
+				return result.data;
+			}),
+
+		saveOutputs: (output, target) =>
+			Effect.gen(function* () {
+				const assets = collectOutputAssets(output);
+				if (assets.length === 0) {
+					return yield* Effect.fail(
+						new FalError({
+							reason:
+								"The model returned no downloadable asset, so --output has nothing to write.\nRe-run without --output to see the raw result.",
+						}),
+					);
+				}
+
+				const isDirectory = yield* Effect.sync(() => {
+					if (target.endsWith("/")) return true;
+					try {
+						return statSync(target).isDirectory();
+					} catch {
+						return false;
+					}
+				});
+
+				const paths = outputPaths(target, assets, isDirectory);
+				for (const [index, asset] of assets.entries()) {
+					const path = paths[index];
+					if (path !== undefined) yield* download(asset.url, path);
+				}
+				return paths;
+			}),
+	};
+};
+
+/**
+ * Builds a fal client bound to the stored key.
+ *
+ * `createFalClient` is used rather than the module-level `fal` singleton so
+ * credentials live in the layer instead of in mutable global state, which also
+ * keeps two differently-configured clients from interfering.
+ */
+export const layer: Layer.Layer<Fal, never, Secrets | HttpClient.HttpClient> =
+	Layer.effect(Fal)(
+		Effect.gen(function* () {
+			const secrets = yield* Secrets;
+			const http = yield* HttpClient.HttpClient;
+			const resolved = yield* secrets
+				.get("fal")
+				.pipe(Effect.orElseSucceed(Option.none));
+			const credentials = Option.map(resolved, (r) => Redacted.value(r.key));
+			const client = createFalClient({
+				credentials: () => Option.getOrUndefined(credentials),
+			});
+			return make({ client, http, credentials });
+		}),
+	);

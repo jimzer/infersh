@@ -44,3 +44,9 @@ some WSL setups have no keyring daemon, and `Bun.secrets` throws
 therefore distinguish "no store at all" from "no key stored": `keys list`
 falls back to environment variables and says so, rather than failing outright.
 Writes still fail loudly, because silently not saving a key would be worse.
+
+The same split applies to the `Fal` service: effectful operations that carry
+dependencies live behind a service key, while pure helpers (query building,
+path detection, output-path planning) stay free functions. A service earns its
+ceremony by making a dependency explicit or swappable; wrapping a pure
+function in one buys nothing.
