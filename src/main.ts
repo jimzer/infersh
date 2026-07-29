@@ -4,13 +4,13 @@ import { BunServices } from "@effect/platform-bun";
 import { Console, Effect } from "effect";
 import { Command } from "effect/unstable/cli";
 import { keysCmd } from "./commands/keys.ts";
+import { updateCmd } from "./commands/update.ts";
 import * as Secrets from "./secrets.ts";
-
-const VERSION = "0.2.0";
+import { VERSION } from "./version.ts";
 
 const inferCmd = Command.make("infer").pipe(
 	Command.withDescription("Run inference providers from the command line."),
-	Command.withSubcommands([keysCmd]),
+	Command.withSubcommands([keysCmd, updateCmd]),
 );
 
 // `runWith` already absorbs the QuitError raised when a prompt is cancelled,

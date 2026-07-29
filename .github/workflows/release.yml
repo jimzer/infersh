@@ -1,0 +1,46 @@
+name: release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: extractions/setup-just@v3
+
+      - run: bun install --frozen-lockfile
+
+      - name: Lint, typecheck, test
+        run: just checkall
+
+      # The git tag is the source of truth for the released version, so the
+      # bundle is stamped from it rather than from package.json.
+      - name: Bundle at the release version
+        run: just bundle "${GITHUB_REF_NAME#v}"
+
+      - name: Verify the bundle reports the tagged version
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          actual="$(./dist/infer.js --version | awk '{print $NF}' | sed 's/^v//')"
+          echo "expected=$expected actual=$actual"
+          [ "$expected" = "$actual" ] || {
+            echo "::error::bundle reports $actual but the tag is $expected"
+            exit 1
+          }
+
+      - name: Attach the bundle to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/infer.js
+          fail_on_unmatched_files: true
