@@ -438,6 +438,13 @@ const videoCmd = Command.make(
 		muted: Flag.boolean("muted").pipe(
 			Flag.withDescription("Drop the audio track from the output."),
 		),
+		frame: Flag.integer("frame").pipe(
+			Flag.withMetavar("n"),
+			Flag.optional,
+			Flag.withDescription(
+				"Render just this one frame as a still image instead of encoding a video. Nothing is encoded, so it is far faster than a full render — the quick way to check a composition looks right at a given moment before committing to the whole thing. The output extension picks the format (.png or .jpeg); defaults to out/frame.png.",
+			),
+		),
 		assets: Flag.string("assets").pipe(
 			Flag.withMetavar("dir"),
 			Flag.optional,
@@ -473,9 +480,26 @@ const videoCmd = Command.make(
 				dimensions.durationInFrames = config.duration.value;
 			}
 
+			const frame = Option.getOrUndefined(config.frame);
+			if (frame !== undefined && frame < 0) {
+				return yield* Effect.fail(
+					new RenderError({ reason: "--frame must not be negative." }),
+				);
+			}
+			if (frame !== undefined && (from !== undefined || to !== undefined)) {
+				return yield* Effect.fail(
+					new RenderError({
+						reason:
+							"--frame renders a single still, so it cannot be combined with --from or --to.",
+					}),
+				);
+			}
+
 			const source = yield* resolveSource(config.composition);
 			const props = yield* resolveProps(config.props);
-			const output = Option.getOrElse(config.output, () => "out/video.mp4");
+			const output = Option.getOrElse(config.output, () =>
+				frame === undefined ? "out/video.mp4" : "out/frame.png",
+			);
 
 			yield* Console.error(
 				"Note: Remotion requires a paid company licence for for-profit organisations with 4 or more employees. See https://remotion.pro",
@@ -498,6 +522,8 @@ const videoCmd = Command.make(
 							? from
 							: undefined,
 				muted: config.muted,
+				frame,
+				stillFormat: /\.jpe?g$/i.test(output) ? "jpeg" : "png",
 			});
 			yield* Console.log(written);
 		}),
@@ -514,6 +540,10 @@ Frame size and length come from the composition when it exports a
 config, and any flag overrides it:
 
   export const config = { width: 1080, height: 1920, fps: 30, durationInFrames: 90 };
+
+Use --frame to render one frame as a still instead. That skips encoding
+entirely, so it is the fast way to check a composition looks right at a
+given moment before rendering all of it.
 
 Packages the composition imports are installed on demand from Bun's
 cache. The first video render also downloads a Chrome build, which is
@@ -543,6 +573,10 @@ company licence — see https://remotion.pro`,
 		{
 			command: "infer render video intro.tsx --codec gif -o preview.gif",
 			description: "Produce a looping GIF instead",
+		},
+		{
+			command: "infer render video intro.tsx --frame 45 -o check.png",
+			description: "Peek at one frame without encoding a video",
 		},
 	]),
 );

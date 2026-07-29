@@ -124,6 +124,9 @@ export interface VideoRequest {
 	readonly scale?: number;
 	readonly frameRange?: readonly [number, number] | number;
 	readonly muted: boolean;
+	/** Render this single frame as a still instead of encoding a video. */
+	readonly frame?: number;
+	readonly stillFormat?: string;
 }
 
 export interface RenderShape {
@@ -434,6 +437,8 @@ const make = (): RenderShape => ({
 					scale: request.scale,
 					frameRange: request.frameRange,
 					muted: request.muted,
+					frame: request.frame,
+					stillFormat: request.stillFormat,
 				});
 
 				yield* Effect.sync(() =>

@@ -55,7 +55,7 @@ registerRoot(Root);
  * and renders it, reporting progress on stderr so stdout stays the output path.
  */
 export const VIDEO_CHILD_SOURCE = `import { bundle } from "@remotion/bundler";
-import { renderMedia, selectComposition } from "@remotion/renderer";
+import { renderMedia, renderStill, selectComposition } from "@remotion/renderer";
 
 const job = JSON.parse(process.argv[2] ?? "{}");
 
@@ -97,6 +97,23 @@ write(
 		composition.durationInFrames +
 		" frames",
 );
+
+// A single frame skips encoding entirely — the fast way to check a
+// composition looks right before paying for the whole render.
+if (job.frame !== undefined) {
+	write("rendering frame " + job.frame);
+	await renderStill({
+		composition,
+		serveUrl,
+		output: job.outputPath,
+		frame: job.frame,
+		inputProps: job.props ?? {},
+		imageFormat: job.stillFormat ?? "png",
+		...(job.scale !== undefined ? { scale: job.scale } : {}),
+		chromiumOptions: { gl: "angle" },
+	});
+	process.exit(0);
+}
 
 let lastRenderPercent = -1;
 await renderMedia({

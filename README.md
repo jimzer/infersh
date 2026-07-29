@@ -66,6 +66,7 @@ infer render image card.tsx -o card.png --props '{"title":"Hello"}'
 infer render image card.tsx --assets ./public --width 1200 --scale 2
 infer render pdf invoice.tsx --props ./data.json --margin 1cm
 infer render video intro.tsx -o intro.mp4 --duration 90
+infer render video intro.tsx --frame 45 -o check.png   # one frame, no encoding
 cat card.tsx | infer render image - -o card.png
 ```
 
@@ -74,6 +75,8 @@ cat card.tsx | infer render image - -o card.png
 ```tsx
 export const config = { width: 1080, height: 1920, fps: 30, durationInFrames: 90 };
 ```
+
+`--frame` renders a single still instead of a video. Encoding is skipped, so it is the quick way to check a composition looks right at a given moment before rendering all of it.
 
 **Licence:** Remotion is free for individuals, non-profits and for-profit organisations with up to 3 employees. Larger organisations need a paid company licence — see [remotion.pro](https://remotion.pro). This is printed on every video render.
 

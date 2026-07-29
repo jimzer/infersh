@@ -79,6 +79,18 @@ earlier reading of `index.ts` suggested it was only reachable via
 on the public `BundleOptions` type, despite living in a type named
 `MandatoryBundleInternalsOptions`.
 
+`--frame` renders one frame with `renderStill` instead of encoding, which is
+what makes it useful for checking a composition mid-iteration. Verified to be
+frame-exact: the still at frame 30 is pixel-identical to frame 30 extracted
+from the encoded video.
+
+Temp directories are removed on success *and* failure by
+`Effect.acquireUseRelease`, verified by rendering repeatedly and after
+deliberate failures with nothing left behind. `rmSync` unlinks the
+`node_modules/.remotion` symlink rather than following it, so the shared
+browser cache survives — worth knowing, because following it would silently
+delete a 193 MB download on every render.
+
 The Chrome Headless Shell that Remotion downloads is shared across renders by
 symlinking `$XDG_CACHE_HOME/infer/remotion` in as `node_modules/.remotion`.
 Without it every render from a fresh temp directory would re-download it.
