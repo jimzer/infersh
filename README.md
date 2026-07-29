@@ -65,8 +65,17 @@ infer fal run fal-ai/flux/dev/image-to-image \
 infer render image card.tsx -o card.png --props '{"title":"Hello"}'
 infer render image card.tsx --assets ./public --width 1200 --scale 2
 infer render pdf invoice.tsx --props ./data.json --margin 1cm
+infer render video intro.tsx -o intro.mp4 --duration 90
 cat card.tsx | infer render image - -o card.png
 ```
+
+`render video` uses [Remotion](https://remotion.dev), so compositions can animate with `useCurrentFrame()` and `Sequence`. Frame size and length come from a `config` export on the composition, with flags overriding it:
+
+```tsx
+export const config = { width: 1080, height: 1920, fps: 30, durationInFrames: 90 };
+```
+
+**Licence:** Remotion is free for individuals, non-profits and for-profit organisations with up to 3 employees. Larger organisations need a paid company licence — see [remotion.pro](https://remotion.pro). This is printed on every video render.
 
 A composition is a `.tsx` file with a default export. It may import other `.tsx` files and **any npm package** — both are resolved for you at render time from Bun's cache, with no project setup. Renders happen in isolation, so nothing is picked up from whatever directory the file lives in. Local assets referenced by relative URL are served straight from disk by request interception; no server is started and nothing is copied.
 

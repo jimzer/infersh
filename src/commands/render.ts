@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { Console, Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import {
+	CODECS,
 	type CompositionSource,
 	PAPER_FORMATS,
 	Render,
@@ -350,6 +351,202 @@ Requires Google Chrome or Chromium; set CHROME_PATH to choose one.`,
 	]),
 );
 
+// --- video ----------------------------------------------------------------
+
+const videoCmd = Command.make(
+	"video",
+	{
+		composition: Argument.string("composition").pipe(
+			Argument.optional,
+			Argument.withDescription(COMPOSITION_NOTE),
+		),
+		output: Flag.string("output").pipe(
+			Flag.withAlias("o"),
+			Flag.withMetavar("path"),
+			Flag.optional,
+			Flag.withDescription(
+				"Where to write the video. Defaults to out/video.mp4.",
+			),
+		),
+		width: Flag.integer("width").pipe(
+			Flag.withMetavar("px"),
+			Flag.optional,
+			Flag.withDescription(
+				"Frame width. Overrides the composition's own config; defaults to 1920.",
+			),
+		),
+		height: Flag.integer("height").pipe(
+			Flag.withMetavar("px"),
+			Flag.optional,
+			Flag.withDescription(
+				"Frame height. Overrides the composition's own config; defaults to 1080.",
+			),
+		),
+		fps: Flag.integer("fps").pipe(
+			Flag.withMetavar("n"),
+			Flag.optional,
+			Flag.withDescription(
+				"Frames per second. Overrides the composition's own config; defaults to 30.",
+			),
+		),
+		duration: Flag.integer("duration").pipe(
+			Flag.withMetavar("frames"),
+			Flag.optional,
+			Flag.withDescription(
+				"Length in frames, not seconds — at 30fps, 150 is five seconds. Overrides the composition's own config.",
+			),
+		),
+		codec: Flag.choice("codec", CODECS).pipe(
+			Flag.optional,
+			Flag.withDescription(
+				"Output codec. Defaults to h264. Use prores for editing, gif for a looping animation, or mp3/aac/wav to extract audio only.",
+			),
+		),
+		from: Flag.integer("from").pipe(
+			Flag.withMetavar("frame"),
+			Flag.optional,
+			Flag.withDescription(
+				"First frame to render, for previewing part of a long composition.",
+			),
+		),
+		to: Flag.integer("to").pipe(
+			Flag.withMetavar("frame"),
+			Flag.optional,
+			Flag.withDescription("Last frame to render, inclusive."),
+		),
+		concurrency: Flag.integer("concurrency").pipe(
+			Flag.withMetavar("n"),
+			Flag.optional,
+			Flag.withDescription(
+				"How many browser tabs render frames in parallel. Defaults to a value derived from the CPU count; lower it if memory is tight.",
+			),
+		),
+		crf: Flag.integer("crf").pipe(
+			Flag.withMetavar("n"),
+			Flag.optional,
+			Flag.withDescription(
+				"Constant rate factor — lower is better quality and a bigger file. Roughly 1-51 for h264, where 18 is visually near-lossless.",
+			),
+		),
+		scale: Flag.float("scale").pipe(
+			Flag.withMetavar("n"),
+			Flag.optional,
+			Flag.withDescription(
+				"Multiply the frame dimensions, e.g. 2 to render 1920x1080 at 3840x2160.",
+			),
+		),
+		muted: Flag.boolean("muted").pipe(
+			Flag.withDescription("Drop the audio track from the output."),
+		),
+		assets: Flag.string("assets").pipe(
+			Flag.withMetavar("dir"),
+			Flag.optional,
+			Flag.withDescription(
+				"Directory of local files the composition loads with staticFile(). Symlinked rather than copied, so a large folder costs nothing. Note this differs from image and pdf, which resolve plain relative URLs.",
+			),
+		),
+		props: Flag.string("props").pipe(
+			Flag.withMetavar("json|path"),
+			Flag.optional,
+			Flag.withDescription(PROPS_NOTE),
+		),
+	},
+	(config) =>
+		Effect.gen(function* () {
+			const render = yield* Render;
+
+			const from = Option.getOrUndefined(config.from);
+			const to = Option.getOrUndefined(config.to);
+			if (from !== undefined && to !== undefined && from > to) {
+				return yield* Effect.fail(
+					new RenderError({ reason: "--from must not be greater than --to." }),
+				);
+			}
+
+			// Only explicitly-set flags are forwarded, so an unset one never
+			// overrides what the composition exported.
+			const dimensions: Record<string, number> = {};
+			if (Option.isSome(config.width)) dimensions.width = config.width.value;
+			if (Option.isSome(config.height)) dimensions.height = config.height.value;
+			if (Option.isSome(config.fps)) dimensions.fps = config.fps.value;
+			if (Option.isSome(config.duration)) {
+				dimensions.durationInFrames = config.duration.value;
+			}
+
+			const source = yield* resolveSource(config.composition);
+			const props = yield* resolveProps(config.props);
+			const output = Option.getOrElse(config.output, () => "out/video.mp4");
+
+			yield* Console.error(
+				"Note: Remotion requires a paid company licence for for-profit organisations with 4 or more employees. See https://remotion.pro",
+			);
+
+			const written = yield* render.toVideo({
+				source,
+				props,
+				outputPath: resolve(output),
+				assetDir: Option.getOrUndefined(config.assets),
+				dimensions,
+				codec: Option.getOrElse(config.codec, () => "h264"),
+				concurrency: Option.getOrUndefined(config.concurrency),
+				crf: Option.getOrUndefined(config.crf),
+				scale: Option.getOrUndefined(config.scale),
+				frameRange:
+					from !== undefined && to !== undefined
+						? ([from, to] as const)
+						: from !== undefined
+							? from
+							: undefined,
+				muted: config.muted,
+			});
+			yield* Console.log(written);
+		}),
+).pipe(
+	Command.withShortDescription("Render a composition to a video."),
+	Command.withDescription(
+		`Render a TSX composition to a video, using Remotion.
+
+The component is rendered frame by frame, so it can animate with
+Remotion's useCurrentFrame() and Sequence primitives. Only the written
+path goes to stdout; progress goes to stderr.
+
+Frame size and length come from the composition when it exports a
+config, and any flag overrides it:
+
+  export const config = { width: 1080, height: 1920, fps: 30, durationInFrames: 90 };
+
+Packages the composition imports are installed on demand from Bun's
+cache. The first video render also downloads a Chrome build, which is
+then reused, so expect it to be slower than later ones.
+
+Licence: Remotion is free for individuals, non-profits and for-profit
+organisations with up to 3 employees. Larger organisations need a paid
+company licence — see https://remotion.pro`,
+	),
+	Command.withExamples([
+		{
+			command: "infer render video intro.tsx -o intro.mp4",
+			description: "Render a composition to an MP4",
+		},
+		{
+			command: `infer render video intro.tsx --props '{"title":"Hello"}' --duration 90`,
+			description: "Pass props and set the length in frames",
+		},
+		{
+			command: "infer render video intro.tsx --width 1080 --height 1920",
+			description: "Render vertically for social",
+		},
+		{
+			command: "infer render video intro.tsx --from 0 --to 30",
+			description: "Render only the first second, to check the start",
+		},
+		{
+			command: "infer render video intro.tsx --codec gif -o preview.gif",
+			description: "Produce a looping GIF instead",
+		},
+	]),
+);
+
 export const renderCmd = Command.make("render").pipe(
 	Command.withShortDescription("Render TSX compositions to images and PDFs."),
 	Command.withDescription(
@@ -359,5 +556,5 @@ A composition is a .tsx file with a default export taking props. It may
 import other .tsx files and any npm package; both are resolved for you,
 in isolation from whatever project the file happens to live in.`,
 	),
-	Command.withSubcommands([imageCmd, pdfCmd]),
+	Command.withSubcommands([imageCmd, pdfCmd, videoCmd]),
 );

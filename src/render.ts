@@ -8,9 +8,9 @@
  * this CLI. See `docs/adrs/0012`.
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { Console, Context, Data, Effect, Layer } from "effect";
 // Embedded as text: the bundler copies the characters and never follows the
 // imports inside, which is what keeps React and Playwright out of the bundle.
@@ -21,6 +21,33 @@ import { Console, Context, Data, Effect, Layer } from "effect";
 import childSource from "./render-child.ts" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import sharedSource from "./render-shared.ts" with { type: "text" };
+
+import {
+	CODECS,
+	INDEX_SOURCE,
+	PACKAGE_JSON_SOURCE,
+	ROOT_SOURCE,
+	TSCONFIG_SOURCE,
+	VIDEO_CHILD_SOURCE,
+	VIDEO_CORE_DEPS,
+} from "./render-video-source.ts";
+
+export { CODECS };
+
+/** The bare package specifiers left in a flattened composition bundle. */
+export const bareImports = (code: string): ReadonlyArray<string> => {
+	const found = new Set<string>();
+	for (const match of code.matchAll(/from\s*"([^"]+)"/g)) {
+		const spec = match[1];
+		if (spec === undefined || spec.startsWith(".")) continue;
+		// react/jsx-runtime and @scope/pkg/sub all install from their root.
+		const parts = spec.split("/");
+		found.add(
+			spec.startsWith("@") ? parts.slice(0, 2).join("/") : (parts[0] ?? spec),
+		);
+	}
+	return [...found];
+};
 
 const CHILD_SOURCE: string = childSource;
 const SHARED_SOURCE: string = sharedSource;
@@ -84,11 +111,29 @@ export interface PdfRequest extends RenderRequest {
 	readonly scale: number;
 }
 
+export interface VideoRequest {
+	readonly source: CompositionSource;
+	readonly props: unknown;
+	readonly outputPath: string;
+	readonly assetDir?: string;
+	/** Only explicitly-set flags, so an absent one never overrides the composition. */
+	readonly dimensions: Record<string, number>;
+	readonly codec: string;
+	readonly concurrency?: number;
+	readonly crf?: number;
+	readonly scale?: number;
+	readonly frameRange?: readonly [number, number] | number;
+	readonly muted: boolean;
+}
+
 export interface RenderShape {
 	readonly toImage: (
 		request: ImageRequest,
 	) => Effect.Effect<string, RenderError>;
 	readonly toPdf: (request: PdfRequest) => Effect.Effect<string, RenderError>;
+	readonly toVideo: (
+		request: VideoRequest,
+	) => Effect.Effect<string, RenderError>;
 }
 
 export class Render extends Context.Service<Render, RenderShape>()("Render") {}
@@ -127,6 +172,14 @@ const write = (path: string, contents: string) =>
 const isolateComposition = (
 	source: CompositionSource,
 	dir: string,
+	/**
+	 * Video renders need the production JSX runtime. Bun compiles JSX to
+	 * `jsxDEV` from `react/jsx-dev-runtime` by default, which Remotion's
+	 * production bundle resolves without that export, failing at the first
+	 * frame with "jsxDEV is not a function". A NODE_ENV define switches Bun to
+	 * `jsx` from `react/jsx-runtime`. (`production: true` does not.)
+	 */
+	productionJsx = false,
 ): Effect.Effect<string, RenderError> =>
 	Effect.gen(function* () {
 		const entry = yield* Effect.gen(function* () {
@@ -162,6 +215,13 @@ const isolateComposition = (
 					entrypoints: [entry],
 					target: "bun",
 					packages: "external",
+					...(productionJsx
+						? {
+								define: {
+									"process.env.NODE_ENV": JSON.stringify("production"),
+								},
+							}
+						: {}),
 				}),
 			catch: (cause) =>
 				new RenderError({
@@ -236,6 +296,72 @@ const runChild = (
 		}),
 	);
 
+/**
+ * Installs the packages a video render needs into the staged directory.
+ *
+ * Unlike the image path, this cannot rely on `--install=fallback`: Remotion
+ * bundles with Rspack, which resolves modules from the filesystem and cannot
+ * see anything Bun resolved in-process. Warm installs come from Bun's global
+ * cache in well under a second.
+ */
+const installDeps = (
+	dir: string,
+	deps: ReadonlyArray<string>,
+): Effect.Effect<void, RenderError> =>
+	Effect.gen(function* () {
+		yield* Console.error(`Installing ${deps.length} packages...`);
+		const result = yield* Effect.tryPromise({
+			try: async () => {
+				const proc = Bun.spawn(["bun", "install", ...deps], {
+					cwd: dir,
+					stdout: "pipe",
+					stderr: "pipe",
+				});
+				const [stderr, code] = await Promise.all([
+					new Response(proc.stderr).text(),
+					proc.exited,
+				]);
+				return { stderr, code };
+			},
+			catch: (cause) =>
+				new RenderError({ reason: `Could not install dependencies: ${cause}` }),
+		});
+		if (result.code !== 0) {
+			return yield* Effect.fail(
+				new RenderError({
+					reason: `Could not install dependencies:\n${result.stderr.trim()}`,
+				}),
+			);
+		}
+	});
+
+/**
+ * Reuses one Chrome Headless Shell across renders.
+ *
+ * Remotion downloads a version-pinned browser into `node_modules/.remotion`,
+ * which would mean a fresh ~150MB download for every render out of a temp
+ * directory. Symlinking a shared cache in makes it a one-time cost.
+ */
+const linkBrowserCache = (dir: string): Effect.Effect<void, RenderError> =>
+	Effect.try({
+		try: () => {
+			const cache = join(
+				process.env.XDG_CACHE_HOME || join(homedir(), ".cache"),
+				"infer",
+				"remotion",
+			);
+			mkdirSync(cache, { recursive: true });
+			mkdirSync(join(dir, "node_modules"), { recursive: true });
+			const link = join(dir, "node_modules", ".remotion");
+			rmSync(link, { recursive: true, force: true });
+			symlinkSync(cache, link);
+		},
+		catch: (cause) =>
+			new RenderError({
+				reason: `Could not prepare the browser cache: ${cause}`,
+			}),
+	});
+
 const make = (): RenderShape => ({
 	toImage: (request) =>
 		Effect.gen(function* () {
@@ -264,6 +390,79 @@ const make = (): RenderShape => ({
 				scale: request.scale,
 			});
 		}),
+
+	toVideo: (request) =>
+		withTempDir((dir) =>
+			Effect.gen(function* () {
+				const flattened = yield* isolateComposition(request.source, dir, true);
+				const code = yield* Effect.tryPromise({
+					try: () => Bun.file(flattened).text(),
+					catch: (cause) =>
+						new RenderError({ reason: `Could not read the bundle: ${cause}` }),
+				});
+
+				// The flattened bundle's remaining bare specifiers *are* the external
+				// dependencies, which beats guessing them from the original source.
+				const deps = [...new Set([...VIDEO_CORE_DEPS, ...bareImports(code)])];
+
+				yield* write(join(dir, "package.json"), PACKAGE_JSON_SOURCE);
+				yield* write(join(dir, "tsconfig.json"), TSCONFIG_SOURCE);
+				yield* write(join(dir, "Root.tsx"), ROOT_SOURCE);
+				yield* write(join(dir, "index.ts"), INDEX_SOURCE);
+				yield* write(
+					join(dir, "config.json"),
+					JSON.stringify({
+						dimensions: request.dimensions,
+						props: request.props ?? {},
+					}),
+				);
+
+				yield* linkBrowserCache(dir);
+				yield* installDeps(dir, deps);
+
+				const childPath = join(dir, "render-video-child.mjs");
+				yield* write(childPath, VIDEO_CHILD_SOURCE);
+
+				const payload = JSON.stringify({
+					entryPoint: join(dir, "index.ts"),
+					outputPath: request.outputPath,
+					publicDir: request.assetDir ? resolve(request.assetDir) : null,
+					props: request.props ?? {},
+					codec: request.codec,
+					concurrency: request.concurrency,
+					crf: request.crf,
+					scale: request.scale,
+					frameRange: request.frameRange,
+					muted: request.muted,
+				});
+
+				yield* Effect.sync(() =>
+					mkdirSync(dirname(request.outputPath), { recursive: true }),
+				);
+
+				const result = yield* Effect.tryPromise({
+					try: async () => {
+						const proc = Bun.spawn(["bun", "run", childPath, payload], {
+							cwd: dir,
+							stdout: "pipe",
+							stderr: "inherit",
+						});
+						return await proc.exited;
+					},
+					catch: (cause) =>
+						new RenderError({ reason: `Could not run the renderer: ${cause}` }),
+				});
+
+				if (result !== 0) {
+					return yield* Effect.fail(
+						new RenderError({
+							reason: "Video render failed; see the output above.",
+						}),
+					);
+				}
+				return request.outputPath;
+			}),
+		),
 });
 
 export const layer: Layer.Layer<Render> = Layer.sync(Render)(make);

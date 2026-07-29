@@ -17,6 +17,7 @@ time to discover and would otherwise be rediscovered the hard way.
 | [10](0010-bright-data-over-rest-not-the-sdk.md) | Bright Data over REST — why the official SDK cannot run on Bun |
 | [11](0011-billed-limits-are-required-not-defaulted.md) | Billed limits are required, never defaulted |
 | [12](0012-render-in-an-isolated-child.md) | Render in an isolated child — auto-installed deps, no asset server |
+| [13](0013-video-through-remotion.md) | Video through Remotion — and its licence consequence |
 
 ## Writing one
 
