@@ -36,6 +36,21 @@ infer fal run fal-ai/flux/schnell --input '{"prompt":"a red apple"}'
 infer fal cdn ./cat.png                     # upload to the fal CDN, print the URL
 ```
 
+By default `run` prints the raw JSON result. With `--output` it downloads the produced assets instead and prints the paths it wrote:
+
+```bash
+infer fal run fal-ai/flux/schnell --input '{"prompt":"a lemon"}' --output ./lemon.jpg
+# ./lemon.jpg
+
+infer fal run fal-ai/flux/schnell --input '{"prompt":"a lemon","num_images":3}' --output ./lemon.jpg
+# ./lemon.jpg  ./lemon-2.jpg  ./lemon-3.jpg
+
+infer fal run fal-ai/flux/schnell --input '{"prompt":"a lemon","num_images":2}' --output ./shots/
+# keeps the model's own filenames inside the directory
+```
+
+The raw result still goes to stderr, so the seed and timings are not lost.
+
 Any value in `--input` that is a path to an existing local file is uploaded to the fal CDN and replaced by its URL — at any depth, whatever the field is called. The mapping is printed to stderr, so `infer fal run … | jq` gets clean JSON:
 
 ```bash

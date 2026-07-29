@@ -11,6 +11,7 @@ import {
 	fetchSpec,
 	resolveAssets,
 	runModel,
+	saveOutputs,
 	searchModels,
 	uploadFile,
 } from "../fal.ts";
@@ -132,7 +133,7 @@ const schemaCmd = Command.make(
 // Effect CLI reuses the full description in the parent's subcommand listing,
 // so this stays one line and the detail lives on the flag it belongs to.
 const RUN_DESCRIPTION =
-	"Run a fal.ai model and print its output as JSON. Local file paths in --input are uploaded to the fal CDN first.";
+	"Run a fal.ai model. Prints the raw JSON result, or downloads the produced assets with --output.";
 
 const runCmd = Command.make(
 	"run",
@@ -141,6 +142,12 @@ const runCmd = Command.make(
 		input: Flag.string("input").pipe(
 			Flag.withDescription(
 				`Model input as a JSON object, e.g. '{"prompt":"a cat"}'. ${ASSET_NOTE}`,
+			),
+		),
+		output: Flag.string("output").pipe(
+			Flag.optional,
+			Flag.withDescription(
+				"Write the produced assets here instead of printing JSON, and print the written paths. A path ending in / or an existing directory keeps the model's own filenames; otherwise several assets are numbered out.png, out-2.png. The raw result still goes to stderr.",
 			),
 		),
 	},
@@ -156,7 +163,19 @@ const runCmd = Command.make(
 
 			const input = yield* resolveAssets(parsed);
 			const output = yield* runModel(config.endpointId, input);
-			yield* Console.log(JSON.stringify(output, null, 2));
+
+			if (Option.isNone(config.output)) {
+				yield* Console.log(JSON.stringify(output, null, 2));
+				return;
+			}
+
+			// Keep the result reachable on stderr: it carries the seed and timings,
+			// which are gone for good once the run is billed.
+			yield* Console.error(JSON.stringify(output, null, 2));
+			const written = yield* saveOutputs(output, config.output.value);
+			for (const path of written) {
+				yield* Console.log(path);
+			}
 		}),
 ).pipe(Command.withDescription(RUN_DESCRIPTION));
 

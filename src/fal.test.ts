@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
 	collectCandidates,
+	collectOutputAssets,
 	extractInputSchema,
 	looksLikePath,
+	outputPaths,
 	searchQuery,
 	specUrl,
 	substitute,
+	urlFileName,
 } from "./fal.ts";
 
 const params = (over: Partial<Parameters<typeof searchQuery>[0]> = {}) => ({
@@ -127,6 +130,114 @@ describe("substitute", () => {
 	test("returns the input unchanged when nothing was uploaded", () => {
 		const input = { image_url: "./cat.png" };
 		expect(substitute(input, new Map())).toEqual(input);
+	});
+});
+
+describe("collectOutputAssets", () => {
+	test("finds assets whatever the surrounding field is called", () => {
+		const assets = collectOutputAssets({
+			images: [{ url: "https://cdn/a.jpg", content_type: "image/jpeg" }],
+			video: { url: "https://cdn/b.mp4", file_name: "clip.mp4" },
+		});
+		expect(assets.map((a) => a.url)).toEqual([
+			"https://cdn/a.jpg",
+			"https://cdn/b.mp4",
+		]);
+		expect(assets[1]?.fileName).toBe("clip.mp4");
+		expect(assets[0]?.contentType).toBe("image/jpeg");
+	});
+
+	test("preserves the order the model returned", () => {
+		const assets = collectOutputAssets({
+			images: [{ url: "https://cdn/1.jpg" }, { url: "https://cdn/2.jpg" }],
+		});
+		expect(assets.map((a) => a.url)).toEqual([
+			"https://cdn/1.jpg",
+			"https://cdn/2.jpg",
+		]);
+	});
+
+	test("ignores non-URL url fields and plain metadata", () => {
+		expect(
+			collectOutputAssets({ seed: 42, prompt: "a cat", url: "not-a-url" }),
+		).toEqual([]);
+	});
+
+	test("returns nothing for a text-only result", () => {
+		expect(collectOutputAssets({ text: "hello" })).toEqual([]);
+	});
+});
+
+describe("urlFileName", () => {
+	test("takes the trailing name, ignoring the query string", () => {
+		expect(urlFileName("https://cdn/files/b/x/cat.png?token=1")).toBe(
+			"cat.png",
+		);
+	});
+
+	test("gives up on a URL with no filename", () => {
+		expect(urlFileName("https://cdn/")).toBeUndefined();
+		expect(urlFileName("nonsense")).toBeUndefined();
+	});
+});
+
+describe("outputPaths", () => {
+	const asset = (url: string, fileName?: string) => ({ url, fileName });
+
+	test("uses the target verbatim for a single asset", () => {
+		expect(outputPaths("out.png", [asset("https://cdn/a.jpg")], false)).toEqual(
+			["out.png"],
+		);
+	});
+
+	test("numbers additional assets before the extension", () => {
+		expect(
+			outputPaths(
+				"shots/out.png",
+				[
+					asset("https://cdn/a"),
+					asset("https://cdn/b"),
+					asset("https://cdn/c"),
+				],
+				false,
+			),
+		).toEqual(["shots/out.png", "shots/out-2.png", "shots/out-3.png"]);
+	});
+
+	test("appends a suffix when the target has no extension", () => {
+		expect(
+			outputPaths(
+				"out",
+				[asset("https://cdn/a"), asset("https://cdn/b")],
+				false,
+			),
+		).toEqual(["out", "out-2"]);
+	});
+
+	test("is not fooled by a dot in a parent directory name", () => {
+		expect(
+			outputPaths(
+				"my.dir/out",
+				[asset("https://cdn/a"), asset("https://cdn/b")],
+				false,
+			),
+		).toEqual(["my.dir/out", "my.dir/out-2"]);
+	});
+
+	test("keeps the model's filenames when the target is a directory", () => {
+		expect(
+			outputPaths(
+				"shots",
+				[asset("https://cdn/a.jpg", "first.jpg"), asset("https://cdn/b.png")],
+				true,
+			),
+		).toEqual(["shots/first.jpg", "shots/b.png"]);
+	});
+
+	test("falls back to an index when a directory target has no usable name", () => {
+		expect(outputPaths("shots", [asset("https://cdn/")], true)).toEqual([
+			"shots/output-1",
+		]);
 	});
 });
 

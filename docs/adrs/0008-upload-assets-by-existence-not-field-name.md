@@ -45,3 +45,19 @@ publish the whole directory structure in a shareable link.
 
 Upload progress goes to stderr and only the model's output goes to stdout, so
 `infer fal run … | jq` works.
+
+## Output assets
+
+The reverse direction uses the mirror-image rule. fal returns files as objects
+carrying a `url` next to `file_name` and `content_type`, whatever the
+surrounding field is called (`images`, `video`, `audio`), so `--output` matches
+on that *shape* rather than on a list of field names.
+
+`--output` writes those assets and prints the paths instead of the JSON: the
+target verbatim for a single asset, numbered `out.png`, `out-2.png` when a
+model returns several, and the model's own filenames when the target is an
+existing directory or ends in `/`. The raw result is still written to stderr,
+because the seed and timings are unrecoverable once a run has been billed.
+
+A model that returns no downloadable asset fails loudly rather than writing
+nothing, since silently producing no files would look like success.

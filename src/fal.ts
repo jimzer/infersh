@@ -6,7 +6,8 @@
  * OpenAPI schemas — goes through Effect's HttpClient.
  */
 
-import { basename } from "node:path";
+import { mkdirSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { fal } from "@fal-ai/client";
 import { dereference } from "@readme/openapi-parser";
 import { Console, Data, Effect, Option, Redacted } from "effect";
@@ -294,6 +295,166 @@ export const resolveAssets = (
 			yield* Console.error(`uploaded ${path} -> ${url}`);
 		}
 		return substitute(input, uploads);
+	});
+
+// --- Saving output assets -------------------------------------------------
+
+export interface OutputAsset {
+	readonly url: string;
+	readonly fileName?: string;
+	readonly contentType?: string;
+}
+
+const isAssetUrl = (value: unknown): value is string =>
+	typeof value === "string" && /^https?:\/\//i.test(value);
+
+/**
+ * Every produced asset, in the order the model returned them.
+ *
+ * fal represents files as objects carrying a `url` alongside `file_name` and
+ * `content_type`, whatever the surrounding field is called (`images`, `video`,
+ * `audio`). Matching on that shape avoids hard-coding a list of field names.
+ */
+export const collectOutputAssets = (
+	output: unknown,
+): ReadonlyArray<OutputAsset> => {
+	const assets: OutputAsset[] = [];
+	const walk = (node: unknown): void => {
+		if (Array.isArray(node)) {
+			for (const item of node) walk(item);
+			return;
+		}
+		if (node === null || typeof node !== "object") return;
+
+		const record = node as Record<string, unknown>;
+		if (isAssetUrl(record.url)) {
+			assets.push({
+				url: record.url,
+				fileName:
+					typeof record.file_name === "string" ? record.file_name : undefined,
+				contentType:
+					typeof record.content_type === "string"
+						? record.content_type
+						: undefined,
+			});
+			// Do not descend into a file object; its fields are metadata.
+			return;
+		}
+		for (const value of Object.values(record)) walk(value);
+	};
+	walk(output);
+	return assets;
+};
+
+/** The trailing filename of a URL, ignoring any query string. */
+export const urlFileName = (url: string): string | undefined => {
+	try {
+		const name = basename(new URL(url).pathname);
+		return name === "" ? undefined : name;
+	} catch {
+		return undefined;
+	}
+};
+
+/** Inserts `-2`, `-3`… before the extension: `out.png` -> `out-2.png`. */
+const numbered = (path: string, index: number): string => {
+	if (index === 0) return path;
+	const dot = basename(path).lastIndexOf(".");
+	if (dot <= 0) return `${path}-${index + 1}`;
+	const cut = path.length - (basename(path).length - dot);
+	return `${path.slice(0, cut)}-${index + 1}${path.slice(cut)}`;
+};
+
+/**
+ * Where each asset should be written for a given `--output` target.
+ *
+ * A directory target keeps the model's own filenames; a file target is used
+ * verbatim for a single asset and numbered when a model returns several.
+ */
+export const outputPaths = (
+	target: string,
+	assets: ReadonlyArray<OutputAsset>,
+	targetIsDirectory: boolean,
+): ReadonlyArray<string> =>
+	assets.map((asset, index) => {
+		if (targetIsDirectory) {
+			const name =
+				asset.fileName ?? urlFileName(asset.url) ?? `output-${index + 1}`;
+			return join(target, name);
+		}
+		return numbered(target, index);
+	});
+
+/** Downloads one asset and writes it to `path`, creating parent directories. */
+export const downloadTo = (
+	url: string,
+	path: string,
+): Effect.Effect<void, FalError, HttpClient.HttpClient> =>
+	Effect.gen(function* () {
+		const response = yield* HttpClient.get(url).pipe(
+			Effect.mapError(
+				(cause) =>
+					new FalError({ reason: `Could not download ${url}: ${cause}` }),
+			),
+		);
+		if (response.status >= 400) {
+			return yield* Effect.fail(
+				new FalError({
+					reason: `Could not download ${url}: ${response.status}`,
+				}),
+			);
+		}
+		const bytes = yield* response.arrayBuffer.pipe(
+			Effect.mapError(
+				(cause) => new FalError({ reason: `Could not read ${url}: ${cause}` }),
+			),
+		);
+		yield* Effect.tryPromise({
+			try: async () => {
+				mkdirSync(dirname(path), { recursive: true });
+				await Bun.write(path, bytes);
+			},
+			catch: (cause) =>
+				new FalError({ reason: `Could not write ${path}: ${cause}` }),
+		});
+	});
+
+/**
+ * Writes every asset in the model output to disk and returns the paths.
+ * Fails loudly when the model produced nothing downloadable — silently
+ * writing no files would look like success.
+ */
+export const saveOutputs = (
+	output: unknown,
+	target: string,
+): Effect.Effect<ReadonlyArray<string>, FalError, HttpClient.HttpClient> =>
+	Effect.gen(function* () {
+		const assets = collectOutputAssets(output);
+		if (assets.length === 0) {
+			return yield* Effect.fail(
+				new FalError({
+					reason:
+						"The model returned no downloadable asset, so --output has nothing to write.\nRe-run without --output to see the raw result.",
+				}),
+			);
+		}
+
+		const isDirectory = yield* Effect.sync(() => {
+			if (target.endsWith("/")) return true;
+			try {
+				return statSync(target).isDirectory();
+			} catch {
+				return false;
+			}
+		});
+
+		const paths = outputPaths(target, assets, isDirectory);
+		for (const [index, asset] of assets.entries()) {
+			const path = paths[index];
+			if (path === undefined) continue;
+			yield* downloadTo(asset.url, path);
+		}
+		return paths;
 	});
 
 // --- Running a model ------------------------------------------------------
