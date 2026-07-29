@@ -10,9 +10,11 @@ import { bdataCmd } from "./commands/bdata.ts";
 import { falCmd } from "./commands/fal.ts";
 import { groqCmd } from "./commands/groq.ts";
 import { keysCmd } from "./commands/keys.ts";
+import { renderCmd } from "./commands/render.ts";
 import { updateCmd } from "./commands/update.ts";
 import * as Fal from "./fal.ts";
 import * as Groq from "./groq.ts";
+import * as Render from "./render.ts";
 import * as Secrets from "./secrets.ts";
 import { VERSION } from "./version.ts";
 
@@ -29,11 +31,19 @@ const appLayer = Layer.mergeAll(
 	Fal.layer.pipe(Layer.provide(base)),
 	Groq.layer.pipe(Layer.provide(base)),
 	Bdata.layer.pipe(Layer.provide(base)),
+	Render.layer,
 );
 
 const inferCmd = Command.make("infer").pipe(
 	Command.withDescription("Run inference providers from the command line."),
-	Command.withSubcommands([bdataCmd, falCmd, groqCmd, keysCmd, updateCmd]),
+	Command.withSubcommands([
+		bdataCmd,
+		falCmd,
+		groqCmd,
+		keysCmd,
+		renderCmd,
+		updateCmd,
+	]),
 );
 
 // `runWith` already absorbs the QuitError raised when a prompt is cancelled,
