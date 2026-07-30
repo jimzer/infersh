@@ -5,6 +5,7 @@
 import { resolve } from "node:path";
 import { Console, Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
+import { emitJson, jsonFlag } from "../output.ts";
 import {
 	CODECS,
 	type CompositionSource,
@@ -13,6 +14,7 @@ import {
 	RenderError,
 	WAIT_EVENTS,
 } from "../render.ts";
+import { formatFromPath } from "../render-shared.ts";
 
 const COMPOSITION_NOTE =
 	"Path to a .tsx file whose default export is a component, or - to read it from stdin. Relative imports of other .tsx files are inlined automatically; package imports are installed on demand.";
@@ -101,6 +103,7 @@ const sharedFlags = {
 			"Skip the Tailwind CDN script. Tailwind is injected by default, which requires network access; disable it for fully offline renders.",
 		),
 	),
+	json: jsonFlag,
 	wait: Flag.choice("wait", WAIT_EVENTS).pipe(
 		Flag.optional,
 		Flag.withDescription(
@@ -184,6 +187,16 @@ const imageCmd = Command.make(
 				transparent: config.transparent,
 				quality: Option.getOrUndefined(config.quality),
 			});
+			if (config.json) {
+				return yield* emitJson({
+					output: written,
+					kind: "image",
+					format: formatFromPath(written),
+					width: Option.getOrElse(config.width, () => 1280),
+					height: Option.getOrUndefined(config.height) ?? null,
+					scale: Option.getOrElse(config.scale, () => 1),
+				});
+			}
 			yield* Console.log(written);
 		}),
 ).pipe(
@@ -314,6 +327,15 @@ const pdfCmd = Command.make(
 				landscape: config.landscape,
 				scale: Option.getOrElse(config.scale, () => 1),
 			});
+			if (config.json) {
+				return yield* emitJson({
+					output: written,
+					kind: "pdf",
+					format: Option.getOrElse(config.format, () => "a4"),
+					landscape: config.landscape,
+					margin,
+				});
+			}
 			yield* Console.log(written);
 		}),
 ).pipe(
@@ -457,6 +479,7 @@ const videoCmd = Command.make(
 			Flag.optional,
 			Flag.withDescription(PROPS_NOTE),
 		),
+		json: jsonFlag,
 	},
 	(config) =>
 		Effect.gen(function* () {
@@ -525,6 +548,16 @@ const videoCmd = Command.make(
 				frame,
 				stillFormat: /\.jpe?g$/i.test(output) ? "jpeg" : "png",
 			});
+			if (config.json) {
+				return yield* emitJson({
+					output: written,
+					kind: frame === undefined ? "video" : "still",
+					...(frame === undefined
+						? { codec: Option.getOrElse(config.codec, () => "h264") }
+						: { frame }),
+					...dimensions,
+				});
+			}
 			yield* Console.log(written);
 		}),
 ).pipe(

@@ -19,6 +19,7 @@ import {
 	videoInput,
 	YOUTUBE_VIDEOS_DATASET,
 } from "../bdata.ts";
+import { emitJson, jsonFlag, wrapPayload } from "../output.ts";
 
 const SCRAPE_KEYS = [
 	"zone",
@@ -91,6 +92,7 @@ const baseFlags = {
 		Flag.optional,
 		Flag.withDescription(INPUT_NOTE),
 	),
+	json: jsonFlag,
 };
 
 const baseOptions = (config: {
@@ -147,6 +149,9 @@ const scrapeCmd = Command.make(
 				baseOptions(config),
 			);
 			const result = yield* bdata.scrape(config.urls, options);
+			if (config.json) {
+				return yield* emitJson(wrapPayload(result, "content"));
+			}
 			yield* Console.log(renderResult(result));
 		}),
 ).pipe(
@@ -240,6 +245,9 @@ const searchCmd = Command.make(
 				() => "google" as SearchEngine,
 			);
 			const result = yield* bdata.search(engine, config.queries, options);
+			if (config.json) {
+				return yield* emitJson(wrapPayload(result, "content"));
+			}
 			yield* Console.log(renderResult(result));
 		}),
 ).pipe(
@@ -298,6 +306,7 @@ const videoCmd = Command.make(
 				"Language for the returned transcript, e.g. English. Omit to use the video's own.",
 			),
 		),
+		json: jsonFlag,
 	},
 	(config) =>
 		Effect.gen(function* () {
@@ -381,6 +390,7 @@ const discoverCmd = Command.make(
 				"Two-letter country code to search from, changing which results are surfaced.",
 			),
 		),
+		json: jsonFlag,
 	},
 	(config) =>
 		Effect.gen(function* () {

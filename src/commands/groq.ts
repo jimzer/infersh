@@ -4,7 +4,14 @@
 
 import { Console, Effect, Option } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
-import { GRANULARITIES, Groq, MODELS, RESPONSE_FORMATS } from "../groq.ts";
+import {
+	GRANULARITIES,
+	Groq,
+	GroqError,
+	MODELS,
+	RESPONSE_FORMATS,
+} from "../groq.ts";
+import { emitJson, jsonFlag, wrapPayload } from "../output.ts";
 
 const TRANSCRIBE_DESCRIPTION = `Transcribe speech from an audio or video file.
 
@@ -88,6 +95,7 @@ const transcribeCmd = Command.make(
 				"Timestamp detail to include: segment for full metadata, word for word-level start and end times. Repeat the flag for both. Requires --response-format verbose_json.",
 			),
 		),
+		json: jsonFlag,
 		noOptimize: Flag.boolean("no-optimize").pipe(
 			Flag.withDescription(
 				"Upload the file exactly as-is, skipping the ffmpeg 16 kHz mono FLAC conversion. Use when the file is already prepared, or when ffmpeg is unavailable.",
@@ -111,6 +119,15 @@ const transcribeCmd = Command.make(
 				granularities: config.timestampGranularities,
 				optimize: !config.noOptimize,
 			});
+			if (config.json) {
+				// The API returns JSON already unless --response-format text, so only
+				// a plain-text body needs wrapping.
+				const parsed = yield* Effect.try({
+					try: () => JSON.parse(result) as unknown,
+					catch: () => new GroqError({ reason: "unreachable" }),
+				}).pipe(Effect.orElseSucceed(() => result));
+				return yield* emitJson(wrapPayload(parsed, "text"));
+			}
 			yield* Console.log(result);
 		}),
 ).pipe(

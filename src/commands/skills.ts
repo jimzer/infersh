@@ -5,6 +5,7 @@
 import { relative } from "node:path";
 import { Console, Effect } from "effect";
 import { Command, Flag, Prompt } from "effect/unstable/cli";
+import { emitJson, jsonFlag } from "../output.ts";
 import {
 	SKILL_FILES,
 	SKILL_NAME,
@@ -96,6 +97,7 @@ const addCmd = Command.make(
 				"Do not ask; take the default choice. Implied when there is no terminal, so this is safe to run from a script.",
 			),
 		),
+		json: jsonFlag,
 	},
 	(config) =>
 		Effect.gen(function* () {
@@ -115,6 +117,14 @@ const addCmd = Command.make(
 			}
 
 			const result = yield* skills.install(claudeDir, config.force);
+
+			if (config.json) {
+				return yield* emitJson({
+					skillDir: result.skillDir,
+					written: result.written,
+					skipped: result.skipped,
+				});
+			}
 
 			for (const file of result.written) {
 				yield* Console.error(`  wrote    ${file}`);
@@ -168,7 +178,7 @@ update\` brings a newer version of the skill with it.`,
 	]),
 );
 
-const listCmd = Command.make("list", {}, () =>
+const listCmd = Command.make("list", { json: jsonFlag }, (config) =>
 	Effect.gen(function* () {
 		const skills = yield* Skills;
 		const planned = yield* skills.plan(process.cwd());
@@ -177,14 +187,28 @@ const listCmd = Command.make("list", {}, () =>
 			planned.kind === "choose" ? planned.ancestor : planned.claudeDir;
 		const dir = skillDir(claudeDir);
 
-		yield* Console.log(`${SKILL_NAME}  ${display(dir)}`);
+		const files: Array<{ path: string; installed: boolean }> = [];
 		for (const file of SKILL_FILES) {
 			const installed = yield* Effect.tryPromise({
 				try: () => Bun.file(`${dir}/${file.path}`).exists(),
 				catch: () => new SkillsError({ reason: "Could not read the skill" }),
 			});
+			files.push({ path: file.path, installed });
+		}
+
+		if (config.json) {
+			return yield* emitJson({
+				skill: SKILL_NAME,
+				skillDir: dir,
+				installed: files.every((f) => f.installed),
+				files,
+			});
+		}
+
+		yield* Console.log(`${SKILL_NAME}  ${display(dir)}`);
+		for (const file of files) {
 			yield* Console.log(
-				`  ${installed ? "installed" : "missing  "}  ${file.path}`,
+				`  ${file.installed ? "installed" : "missing  "}  ${file.path}`,
 			);
 		}
 		if (planned.kind !== "existing") {

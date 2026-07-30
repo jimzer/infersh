@@ -5,6 +5,7 @@
 import { Console, Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { extractInputSchema, Fal, FalError } from "../fal.ts";
+import { emitJson, jsonFlag } from "../output.ts";
 
 // --- models ---------------------------------------------------------------
 
@@ -52,11 +53,7 @@ const modelsCmd = Command.make(
 				"Fetch the next page, using the cursor printed at the end of the previous run.",
 			),
 		),
-		json: Flag.boolean("json").pipe(
-			Flag.withDescription(
-				"Print the raw API response instead of one endpoint ID per line.",
-			),
-		),
+		json: jsonFlag,
 	},
 	(config) =>
 		Effect.gen(function* () {
@@ -137,6 +134,9 @@ const schemaCmd = Command.make(
 				"Print the entire OpenAPI document rather than only the input schema.",
 			),
 		),
+		// This command's output is already a JSON document, so the flag is
+		// accepted for uniformity and changes nothing.
+		json: jsonFlag,
 	},
 	(config) =>
 		Effect.gen(function* () {
@@ -204,6 +204,7 @@ const runCmd = Command.make(
 				"Download the produced assets to this path and print what was written, instead of printing the result JSON. A directory (or a path ending in /) keeps the model's own filenames; otherwise the first asset takes the path exactly and any others are numbered out.png, out-2.png. The raw result is still written to stderr.",
 			),
 		),
+		json: jsonFlag,
 	},
 	(config) =>
 		Effect.gen(function* () {
@@ -219,6 +220,7 @@ const runCmd = Command.make(
 			const output = yield* fal.run(config.endpointId, input);
 
 			if (Option.isNone(config.output)) {
+				// Already a JSON document, so --json changes nothing here.
 				yield* Console.log(JSON.stringify(output, null, 2));
 				return;
 			}
@@ -227,6 +229,9 @@ const runCmd = Command.make(
 			// which are gone for good once the run is billed.
 			yield* Console.error(JSON.stringify(output, null, 2));
 			const written = yield* fal.saveOutputs(output, config.output.value);
+			if (config.json) {
+				return yield* emitJson({ output: written, result: output });
+			}
 			for (const path of written) {
 				yield* Console.log(path);
 			}
@@ -276,14 +281,18 @@ const cdnCmd = Command.make(
 				"One or more local files to upload. Each URL is printed on its own line, in the order given.",
 			),
 		),
+		json: jsonFlag,
 	},
 	(config) =>
 		Effect.gen(function* () {
 			const fal = yield* Fal;
+			const uploads: Array<{ file: string; url: string }> = [];
 			for (const file of config.files) {
 				const url = yield* fal.upload(file);
-				yield* Console.log(url);
+				uploads.push({ file, url });
+				if (!config.json) yield* Console.log(url);
 			}
+			if (config.json) yield* emitJson({ uploads });
 		}),
 ).pipe(
 	Command.withShortDescription("Upload files to the fal CDN."),

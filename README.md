@@ -26,6 +26,8 @@ infer update --check  # just report whether one is available
 
 ## Usage
 
+Every command takes `--json`, and the guarantee is uniform: stdout becomes exactly one JSON value. Payloads that are not already JSON are wrapped — a scraped page as `{"content":…}`, a transcript as `{"text":…}`, a render as `{"output":"/path",…}` — so nothing has to know which command emits what shape.
+
 ### fal.ai
 
 ```bash

@@ -4,6 +4,7 @@
 
 import { Console, Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
+import { emitJson, jsonFlag } from "../output.ts";
 import {
 	installPath,
 	isSourceCheckout,
@@ -37,10 +38,23 @@ export const updateCmd = Command.make(
 				"Download and reinstall even when already on the latest version, to repair a damaged install. Still refuses to overwrite a source checkout.",
 			),
 		),
+		json: jsonFlag,
 	},
 	(config) =>
 		Effect.gen(function* () {
 			const { version: latest, assetUrl } = yield* latestRelease();
+			const outdatedNow = isDev() || isNewer(latest, VERSION);
+
+			// A single JSON value, so --json --check is a clean machine query.
+			if (config.json && (config.check || !outdatedNow) && !config.force) {
+				return yield* emitJson({
+					installed: VERSION,
+					latest,
+					outdated: outdatedNow,
+					updated: false,
+					dev: isDev(),
+				});
+			}
 
 			if (isDev()) {
 				yield* Console.log(
@@ -73,8 +87,17 @@ export const updateCmd = Command.make(
 				);
 			}
 
-			yield* Console.log(`Downloading v${latest}...`);
+			if (!config.json) yield* Console.log(`Downloading v${latest}...`);
 			yield* replaceBinary(target, assetUrl);
+			if (config.json) {
+				return yield* emitJson({
+					installed: VERSION,
+					latest,
+					outdated: true,
+					updated: true,
+					path: target,
+				});
+			}
 			yield* Console.log(`Updated to v${latest} (${target}).`);
 		}),
 ).pipe(

@@ -4,6 +4,7 @@
 
 import { Console, Effect, Option, Redacted } from "effect";
 import { Argument, Command, Prompt } from "effect/unstable/cli";
+import { emitJson, jsonFlag } from "../output.ts";
 import {
 	mask,
 	providerIds,
@@ -15,10 +16,13 @@ import {
 // `withShortDescription` is what the parent's subcommand listing shows, so
 // `withDescription` is free to be as long as it needs to be.
 
-const setCmd = Command.make("set", {}, () =>
+const setCmd = Command.make("set", { json: jsonFlag }, (config) =>
 	Effect.gen(function* () {
 		const secrets = yield* Secrets;
-		yield* Console.log("Leave a prompt blank to keep the current value.\n");
+		const outcome: Array<{ provider: string; result: string }> = [];
+		if (!config.json) {
+			yield* Console.log("Leave a prompt blank to keep the current value.\n");
+		}
 
 		for (const id of providerIds) {
 			const info = providers[id];
@@ -27,9 +31,12 @@ const setCmd = Command.make("set", {}, () =>
 			// An env var wins over the keychain at resolve time, so saving a key
 			// here would have no visible effect until that var is unset.
 			if (Option.isSome(existing) && existing.value.source === "env") {
-				yield* Console.log(
-					`${info.label}: using ${info.env} from the environment — skipping.`,
-				);
+				outcome.push({ provider: id, result: "from-environment" });
+				if (!config.json) {
+					yield* Console.log(
+						`${info.label}: using ${info.env} from the environment — skipping.`,
+					);
+				}
 				continue;
 			}
 
@@ -40,17 +47,26 @@ const setCmd = Command.make("set", {}, () =>
 
 			const value = Redacted.value(entered).trim();
 			if (value === "") {
-				yield* Console.log(
-					Option.isSome(existing)
-						? `  kept existing ${info.label} key`
-						: `  skipped ${info.label}`,
-				);
+				outcome.push({
+					provider: id,
+					result: Option.isSome(existing) ? "kept" : "skipped",
+				});
+				if (!config.json) {
+					yield* Console.log(
+						Option.isSome(existing)
+							? `  kept existing ${info.label} key`
+							: `  skipped ${info.label}`,
+					);
+				}
 				continue;
 			}
 
 			yield* secrets.set(id, Redacted.make(value));
-			yield* Console.log(`  saved ${info.label} key`);
+			outcome.push({ provider: id, result: "saved" });
+			if (!config.json) yield* Console.log(`  saved ${info.label} key`);
 		}
+
+		if (config.json) yield* emitJson({ keys: outcome });
 	}),
 ).pipe(
 	Command.withShortDescription("Store each provider API key, interactively."),
@@ -73,10 +89,16 @@ variable would take precedence anyway.`,
 	]),
 );
 
-const listCmd = Command.make("list", {}, () =>
+const listCmd = Command.make("list", { json: jsonFlag }, (config) =>
 	Effect.gen(function* () {
 		const secrets = yield* Secrets;
 		let unavailable = false;
+		const rows: Array<{
+			provider: string;
+			set: boolean;
+			source: string | null;
+			masked: string | null;
+		}> = [];
 
 		for (const id of providerIds) {
 			// A machine with no credential store can still resolve keys from the
@@ -88,10 +110,22 @@ const listCmd = Command.make("list", {}, () =>
 					return Effect.succeed(Option.none<ResolvedKey>());
 				}),
 			);
+			rows.push({
+				provider: id,
+				set: Option.isSome(resolved),
+				source: Option.isSome(resolved) ? resolved.value.source : null,
+				masked: Option.isSome(resolved) ? mask(resolved.value.key) : null,
+			});
+
+			if (config.json) continue;
 			const status = Option.isNone(resolved)
 				? "not set"
 				: `${mask(resolved.value.key)}  (${resolved.value.source})`;
 			yield* Console.log(`${id.padEnd(12)} ${status}`);
+		}
+
+		if (config.json) {
+			return yield* emitJson({ keys: rows, credentialStore: !unavailable });
 		}
 
 		if (unavailable) {
@@ -126,12 +160,16 @@ const rmCmd = Command.make(
 				"Which provider's key to delete. Only the stored key is removed; an environment variable of the same name is untouched.",
 			),
 		),
+		json: jsonFlag,
 	},
 	(config) =>
 		Effect.gen(function* () {
 			const secrets = yield* Secrets;
 			const deleted = yield* secrets.remove(config.provider);
 			const label = providers[config.provider].label;
+			if (config.json) {
+				return yield* emitJson({ provider: config.provider, removed: deleted });
+			}
 			yield* Console.log(
 				deleted ? `removed ${label} key` : `no stored ${label} key`,
 			);

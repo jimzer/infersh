@@ -60,6 +60,12 @@ the key.
 
 - **stdout is the result, stderr is the noise.** `infer fal run … | jq` and
   `infer render image … | xargs open` both work. Never parse stderr.
+- **`--json` on any command makes stdout exactly one JSON value.** Prefer it
+  over parsing human output — every command accepts it, and payloads that are
+  not already JSON get wrapped (a scraped page as `{"content":…}`, a plain-text
+  transcript as `{"text":…}`, a render as `{"output":"/path",…}`). Commands whose
+  output is already a JSON document, such as `fal schema`, accept the flag and
+  are unchanged by it.
 - **A failure exits non-zero with a message on stderr.** Read the message; it
   usually names the fix.
 - Where a flag bounds something **billed**, it is required rather than
