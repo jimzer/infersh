@@ -14,13 +14,21 @@ import {
 	RenderError,
 	WAIT_EVENTS,
 } from "../render.ts";
-import { formatFromPath } from "../render-shared.ts";
 
 const COMPOSITION_NOTE =
 	"Path to a .tsx file whose default export is a component, or - to read it from stdin. Relative imports of other .tsx files are inlined automatically; package imports are installed on demand.";
 
 const PROPS_NOTE =
 	"Props for the component, as inline JSON or a path to a .json file. Available as the component's first argument.";
+
+/**
+ * Local copy of the extension-to-format rule.
+ *
+ * `render-shared.ts` is text-imported by `render.ts`, which makes it text for
+ * the whole build, so no module may import values from it (ADR 12).
+ */
+const imageFormat = (path: string): string =>
+	/\.jpe?g$/i.test(path) ? "jpeg" : /\.webp$/i.test(path) ? "webp" : "png";
 
 /** Reads a composition from stdin when the path is `-` or omitted. */
 const readStdin = Effect.tryPromise({
@@ -191,7 +199,7 @@ const imageCmd = Command.make(
 				return yield* emitJson({
 					output: written,
 					kind: "image",
-					format: formatFromPath(written),
+					format: imageFormat(written),
 					width: Option.getOrElse(config.width, () => 1280),
 					height: Option.getOrUndefined(config.height) ?? null,
 					scale: Option.getOrElse(config.scale, () => 1),
