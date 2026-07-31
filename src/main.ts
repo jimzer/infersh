@@ -15,6 +15,7 @@ import { keysCmd } from "./commands/keys.ts";
 import { openrouterCmd } from "./commands/openrouter.ts";
 import { renderCmd } from "./commands/render.ts";
 import { skillsCmd } from "./commands/skills.ts";
+import { uiCmd } from "./commands/ui.ts";
 import { updateCmd } from "./commands/update.ts";
 import * as Fal from "./fal.ts";
 import * as Groq from "./groq.ts";
@@ -22,6 +23,7 @@ import * as OpenRouter from "./openrouter.ts";
 import * as Render from "./render.ts";
 import * as Secrets from "./secrets.ts";
 import * as Skills from "./skills.ts";
+import * as Ui from "./ui.ts";
 import { VERSION } from "./version.ts";
 
 // Secrets and the HTTP client are needed both directly by commands and by the
@@ -41,6 +43,7 @@ const appLayer = Layer.mergeAll(
 	OpenRouter.layer.pipe(Layer.provide(base)),
 	Render.layer,
 	Skills.layer,
+	Ui.layer,
 );
 
 const inferCmd = Command.make("infer").pipe(
@@ -54,6 +57,7 @@ const inferCmd = Command.make("infer").pipe(
 		openrouterCmd,
 		renderCmd,
 		skillsCmd,
+		uiCmd,
 		updateCmd,
 	]),
 );
