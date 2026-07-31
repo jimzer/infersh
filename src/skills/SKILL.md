@@ -30,7 +30,7 @@ already does that and cannot go stale.
 | ↳ video | writing animated compositions, and looking up Remotion docs | [remotion.md](references/remotion.md) |
 | `infer fal` | fal.ai models: search, inspect, run | [fal.md](references/fal.md) |
 | `infer bdata` | Bright Data: scrape pages, search engines, YouTube | [bdata.md](references/bdata.md) |
-| `infer openrouter` | run a prompt through any model, with JSON-schema output | [openrouter.md](references/openrouter.md) |
+| `infer openrouter` | find any model and run a prompt through it, with JSON-schema output | [openrouter.md](references/openrouter.md) |
 | `infer groq` | Groq Whisper speech-to-text | [groq.md](references/groq.md) |
 
 Read the reference file for the area you are working in. Do not read all of

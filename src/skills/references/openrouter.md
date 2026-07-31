@@ -12,11 +12,57 @@ Needs `OPENROUTER_API_KEY`. Check the balance with `infer budget openrouter`.
 
 Reaching a model that no other command wraps. One key gets hundreds of models
 from every major provider, addressed by slug (`anthropic/claude-sonnet-5`,
-`x-ai/grok-4.5`, `openai/gpt-oss-20b`). Browse them at
-<https://openrouter.ai/models>.
+`x-ai/grok-4.5`, `openai/gpt-oss-20b`).
 
 The endpoint is **stateless** — there is no conversation history. `--prompt`
 carries everything the model sees, so include any context it needs.
+
+## Finding a model
+
+`models` and `endpoints` need **no API key**, so exploring costs nothing.
+
+```bash
+infer openrouter models                                        # all of them
+infer openrouter models --author anthropic
+infer openrouter models --supports structured_outputs --max-price 0.2
+infer openrouter models --min-context 1000000 --limit 10
+```
+
+Prints the slug first on each line, so `| awk '{print $1}'` feeds straight
+into `response`. Prices are USD per million tokens. `--q` searches id, name
+and description; with no flags at all you get the whole catalogue.
+
+`--supports structured_outputs` is the one to reach for when you intend to use
+`--schema` — it narrows to models that can honour it.
+
+## Which provider actually serves it
+
+`endpoints` is not a duplicate of `models`. OpenRouter is a *router*: one slug
+may be served by a dozen upstream providers, and **they are not
+interchangeable**.
+
+```bash
+infer openrouter endpoints meta-llama/llama-3.3-70b-instruct
+```
+
+```
+DeepInfra   ctx=131K  in=$0.1    quant=fp8   up=94%
+Novita      ctx=6K    in=$0.135  quant=bf16  up=98%
+Together    ctx=131K  in=$1.04   quant=fp8   up=99%
+```
+
+For that one model, real numbers: price varies **10×**, context varies **22×**,
+and quantization differs (fp8 / bf16 / fp16) which changes output quality for
+identical weights.
+
+**The catalogue's `context_length` is the model's headline figure, not what you
+will get.** Novita serves that model at 6K when the catalogue says 131K. Before
+a long-context job, check `endpoints` — otherwise a request that should work
+fails depending on which provider you were routed to.
+
+Uptime is the last 30 minutes. **Latency and throughput are not published by
+this API** — the fields exist but come back null on every provider, so they are
+not shown. Do not expect to sort by speed.
 
 ## Structured output is the reason to reach for this
 

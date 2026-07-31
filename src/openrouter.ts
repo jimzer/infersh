@@ -17,6 +17,7 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { MissingKeyError, Secrets } from "./secrets.ts";
 
 const RESPONSES_URL = "https://openrouter.ai/api/v1/responses";
+const MODELS_URL = "https://openrouter.ai/api/v1/models";
 
 export class OpenRouterError extends Data.TaggedError("OpenRouterError")<{
 	readonly reason: string;
@@ -186,12 +187,221 @@ export const parseResponse = (
 	};
 };
 
+// --- Model catalogue ------------------------------------------------------
+
+export interface Model {
+	readonly id: string;
+	readonly name?: string;
+	readonly description?: string;
+	readonly contextLength?: number;
+	/** USD per million input tokens. */
+	readonly inputPrice?: number;
+	/** USD per million output tokens. */
+	readonly outputPrice?: number;
+	readonly modality?: string;
+	readonly supportedParameters: ReadonlyArray<string>;
+	readonly reasoning: boolean;
+}
+
+/** One upstream deployment of a model, as OpenRouter would route to it. */
+export interface Endpoint {
+	readonly provider: string;
+	readonly contextLength?: number;
+	readonly inputPrice?: number;
+	readonly outputPrice?: number;
+	readonly quantization?: string;
+	/** Percentage over the last 30 minutes. */
+	readonly uptime?: number;
+	readonly maxCompletionTokens?: number;
+}
+
+export interface ModelFilters {
+	readonly q?: string;
+	readonly author?: string;
+	readonly category?: string;
+	readonly supports?: string;
+	/** Ceiling on USD per million input tokens. */
+	readonly maxPrice?: number;
+	readonly minContext?: number;
+	readonly limit?: number;
+}
+
+/**
+ * Query string for `/models`.
+ *
+ * Only `category` and `supported_parameters` are honoured by the API. An
+ * `author` parameter is silently ignored — it returns the full list rather
+ * than erroring — so that filter is applied locally instead. Verified against
+ * the live endpoint: `?author=anthropic` returned all 364 models.
+ */
+export const modelsQuery = (filters: ModelFilters): string => {
+	const query = new URLSearchParams();
+	if (filters.category) query.set("category", filters.category);
+	if (filters.supports) query.set("supported_parameters", filters.supports);
+	return query.toString();
+};
+
+/** Prices arrive as strings in dollars per token; humans think per million. */
+const perMillion = (value: unknown): number | undefined => {
+	const parsed =
+		typeof value === "string"
+			? Number(value)
+			: typeof value === "number"
+				? value
+				: Number.NaN;
+	return Number.isFinite(parsed) ? parsed * 1_000_000 : undefined;
+};
+
+export const parseModels = (payload: unknown): ReadonlyArray<Model> => {
+	if (typeof payload !== "object" || payload === null) return [];
+	const data = (payload as { data?: unknown }).data;
+	if (!Array.isArray(data)) return [];
+
+	const models: Array<Model> = [];
+	for (const entry of data) {
+		if (typeof entry !== "object" || entry === null) continue;
+		const record = entry as Record<string, unknown>;
+		const id = asString(record.id);
+		if (id === undefined) continue;
+
+		const pricing = record.pricing as Record<string, unknown> | undefined;
+		const architecture = record.architecture as
+			| Record<string, unknown>
+			| undefined;
+		const reasoning = record.reasoning;
+		const supported = record.supported_parameters;
+
+		models.push({
+			id,
+			...(asString(record.name) === undefined
+				? {}
+				: { name: asString(record.name) }),
+			...(asString(record.description) === undefined
+				? {}
+				: { description: asString(record.description) }),
+			...(asNumber(record.context_length) === undefined
+				? {}
+				: { contextLength: asNumber(record.context_length) }),
+			...(perMillion(pricing?.prompt) === undefined
+				? {}
+				: { inputPrice: perMillion(pricing?.prompt) }),
+			...(perMillion(pricing?.completion) === undefined
+				? {}
+				: { outputPrice: perMillion(pricing?.completion) }),
+			...(asString(architecture?.modality) === undefined
+				? {}
+				: { modality: asString(architecture?.modality) }),
+			supportedParameters: Array.isArray(supported)
+				? supported.filter((p): p is string => typeof p === "string")
+				: [],
+			reasoning: typeof reasoning === "object" && reasoning !== null,
+		});
+	}
+	return models;
+};
+
+/** Applies the filters the API does not, in the order that rejects fastest. */
+export const filterModels = (
+	models: ReadonlyArray<Model>,
+	filters: ModelFilters,
+): ReadonlyArray<Model> => {
+	const needle = filters.q?.toLowerCase();
+	const matched = models.filter((model) => {
+		if (filters.author !== undefined) {
+			if (
+				!model.id.toLowerCase().startsWith(`${filters.author.toLowerCase()}/`)
+			) {
+				return false;
+			}
+		}
+		if (filters.minContext !== undefined) {
+			if (model.contextLength === undefined) return false;
+			if (model.contextLength < filters.minContext) return false;
+		}
+		if (filters.maxPrice !== undefined) {
+			if (model.inputPrice === undefined) return false;
+			if (model.inputPrice > filters.maxPrice) return false;
+		}
+		if (needle !== undefined && needle !== "") {
+			const haystack =
+				`${model.id} ${model.name ?? ""} ${model.description ?? ""}`.toLowerCase();
+			if (!haystack.includes(needle)) return false;
+		}
+		return true;
+	});
+	// Truncating is the caller's explicit request, so it happens last.
+	return filters.limit === undefined
+		? matched
+		: matched.slice(0, filters.limit);
+};
+
+export const parseEndpoints = (payload: unknown): ReadonlyArray<Endpoint> => {
+	if (typeof payload !== "object" || payload === null) return [];
+	const data = (payload as { data?: unknown }).data;
+	if (typeof data !== "object" || data === null) return [];
+	const list = (data as { endpoints?: unknown }).endpoints;
+	if (!Array.isArray(list)) return [];
+
+	const endpoints: Array<Endpoint> = [];
+	for (const entry of list) {
+		if (typeof entry !== "object" || entry === null) continue;
+		const record = entry as Record<string, unknown>;
+		const provider = asString(record.provider_name);
+		if (provider === undefined) continue;
+		const pricing = record.pricing as Record<string, unknown> | undefined;
+		endpoints.push({
+			provider,
+			...(asNumber(record.context_length) === undefined
+				? {}
+				: { contextLength: asNumber(record.context_length) }),
+			...(perMillion(pricing?.prompt) === undefined
+				? {}
+				: { inputPrice: perMillion(pricing?.prompt) }),
+			...(perMillion(pricing?.completion) === undefined
+				? {}
+				: { outputPrice: perMillion(pricing?.completion) }),
+			...(asString(record.quantization) === undefined
+				? {}
+				: { quantization: asString(record.quantization) }),
+			...(asNumber(record.uptime_last_30m) === undefined
+				? {}
+				: { uptime: asNumber(record.uptime_last_30m) }),
+			...(asNumber(record.max_completion_tokens) === undefined
+				? {}
+				: { maxCompletionTokens: asNumber(record.max_completion_tokens) }),
+		});
+	}
+	return endpoints;
+};
+
+/** `131072` → `131K`, because exact token counts are noise in a listing. */
+export const formatContext = (tokens: number | undefined): string => {
+	if (tokens === undefined) return "—";
+	if (tokens >= 1_000_000) return `${Math.round(tokens / 100_000) / 10}M`;
+	if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`;
+	return String(tokens);
+};
+
+/** Trims float noise: the API returns 0.09999999999999999 for ten cents. */
+export const formatPrice = (perMillionTokens: number | undefined): string =>
+	perMillionTokens === undefined
+		? "—"
+		: `$${Number(perMillionTokens.toFixed(4))}`;
+
 // --- Service --------------------------------------------------------------
 
 export interface OpenRouterShape {
 	readonly respond: (
 		options: ResponseOptions,
 	) => Effect.Effect<ResponseResult, OpenRouterError>;
+	/** The model catalogue. Needs no API key. */
+	readonly models: (
+		filters: ModelFilters,
+	) => Effect.Effect<ReadonlyArray<Model>, OpenRouterError>;
+	/** Every upstream deployment of one model. Needs no API key. */
+	readonly endpoints: (
+		model: string,
+	) => Effect.Effect<ReadonlyArray<Endpoint>, OpenRouterError>;
 }
 
 export class OpenRouter extends Context.Service<OpenRouter, OpenRouterShape>()(
@@ -212,7 +422,81 @@ const make = (options: {
 				}),
 			);
 
+	/** GETs a public catalogue URL; a key is sent only if one happens to exist. */
+	const getJson = (url: string): Effect.Effect<unknown, OpenRouterError> =>
+		Effect.gen(function* () {
+			const headers: Record<string, string> = {
+				"HTTP-Referer": "https://github.com/jimzer/infersh",
+				"X-Title": "infer",
+			};
+			if (Option.isSome(credentials)) {
+				headers.Authorization = `Bearer ${credentials.value}`;
+			}
+			const response = yield* http
+				.get(url, { headers })
+				.pipe(
+					Effect.mapError(
+						(cause) =>
+							new OpenRouterError({ reason: `Request failed: ${cause}` }),
+					),
+				);
+			const text = yield* response.text.pipe(
+				Effect.mapError(
+					(cause) =>
+						new OpenRouterError({
+							reason: `Could not read the response: ${cause}`,
+						}),
+				),
+			);
+			if (response.status >= 400) {
+				return yield* Effect.fail(
+					new OpenRouterError({
+						reason: `OpenRouter returned ${response.status}: ${text.slice(0, 300)}`,
+					}),
+				);
+			}
+			return yield* Effect.try({
+				try: () => JSON.parse(text) as unknown,
+				catch: (cause) =>
+					new OpenRouterError({
+						reason: `OpenRouter returned a non-JSON body: ${cause}`,
+					}),
+			});
+		});
+
 	return {
+		models: (filters) =>
+			Effect.gen(function* () {
+				const query = modelsQuery(filters);
+				const payload = yield* getJson(
+					query === "" ? MODELS_URL : `${MODELS_URL}?${query}`,
+				);
+				return filterModels(parseModels(payload), filters);
+			}),
+
+		endpoints: (model) =>
+			Effect.gen(function* () {
+				// The route is /models/{author}/{slug}/endpoints, so the slug must
+				// carry its author prefix; without one the URL silently 404s.
+				if (!model.includes("/")) {
+					return yield* Effect.fail(
+						new OpenRouterError({
+							reason: `"${model}" is not a full model slug. Use author/name, e.g. anthropic/claude-sonnet-5 — find one with \`infer openrouter models\`.`,
+						}),
+					);
+				}
+				const payload = yield* getJson(`${MODELS_URL}/${model}/endpoints`);
+				const endpoints = parseEndpoints(payload);
+				if (endpoints.length === 0) {
+					return yield* Effect.fail(
+						new OpenRouterError({
+							reason: `No endpoints found for ${model}. Check the slug with \`infer openrouter models --q ${model.split("/").pop()}\`.`,
+						}),
+					);
+				}
+				return endpoints;
+			}),
+
 		respond: (request) =>
 			Effect.gen(function* () {
 				if (request.schema !== undefined) {
