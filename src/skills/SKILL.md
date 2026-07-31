@@ -1,6 +1,6 @@
 ---
 name: infer
-description: Use the infer CLI to render TSX compositions into images, PDFs and videos, run fal.ai models, scrape the web and search with Bright Data, and transcribe audio with Groq. Use when asked to generate an image or video from code, render a PDF, produce an OG image or social clip, run an AI image or video model, scrape a page, search the web, find YouTube videos, or transcribe audio.
+description: Use the infer CLI to render TSX compositions into images, PDFs and videos, run fal.ai models, scrape the web and search with Bright Data, and transcribe audio with Groq. Use when asked to generate an image or video from code, render a PDF, produce an OG image or social clip, run an AI image or video model, scrape a page, search the web, find YouTube videos, transcribe audio, run a prompt through any model with JSON-schema output, or check how much provider credit is left.
 ---
 
 # infer
@@ -30,6 +30,7 @@ already does that and cannot go stale.
 | ↳ video | writing animated compositions, and looking up Remotion docs | [remotion.md](references/remotion.md) |
 | `infer fal` | fal.ai models: search, inspect, run | [fal.md](references/fal.md) |
 | `infer bdata` | Bright Data: scrape pages, search engines, YouTube | [bdata.md](references/bdata.md) |
+| `infer openrouter` | run a prompt through any model, with JSON-schema output | [openrouter.md](references/openrouter.md) |
 | `infer groq` | Groq Whisper speech-to-text | [groq.md](references/groq.md) |
 
 Read the reference file for the area you are working in. Do not read all of
@@ -45,6 +46,7 @@ credential store:
 | fal.ai | `FAL_KEY` |
 | Bright Data | `BRIGHTDATA_API_KEY` |
 | Groq | `GROQ_API_KEY` |
+| OpenRouter | `OPENROUTER_API_KEY` |
 
 ```bash
 infer keys list    # which keys are set, masked, and where each resolves from
@@ -55,6 +57,29 @@ infer keys rm fal  # forget a stored key
 `infer render` needs no key at all. If a command fails with "No … API key
 found", say so rather than trying to work around it — the user has to supply
 the key.
+
+## Money
+
+Every provider is pay-as-you-go. `infer budget` reports what is left:
+
+```bash
+infer budget              # every provider
+infer budget --json       # status per provider, plus a summed total
+```
+
+It always exits 0, because a provider that cannot report is part of the answer.
+In `--json`, branch on `status` — `ok`, `no-key`, `no-api`, `denied`, `error` —
+never on the prose. Two things to know before reading a low number as alarming:
+
+- **Groq has no billing API at all**, so its row is always a console link. This
+  is not a fault to investigate or work around.
+- **fal.ai needs an Admin-scope key** for a balance, which is a stricter key
+  than running models needs. `denied` on the fal row usually means the key
+  works fine for `infer fal run` and simply cannot read billing.
+
+Figures lag real usage, since providers settle on their own schedules. Treat a
+balance as recent, not exact, and check it before a large job rather than
+after.
 
 ## Rules that apply everywhere
 

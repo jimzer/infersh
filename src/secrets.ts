@@ -36,6 +36,11 @@ export const providers = {
 		env: "GROQ_API_KEY",
 		url: "https://console.groq.com/keys",
 	},
+	openrouter: {
+		label: "OpenRouter",
+		env: "OPENROUTER_API_KEY",
+		url: "https://openrouter.ai/settings/keys",
+	},
 } as const satisfies Record<string, ProviderInfo>;
 
 export type ProviderId = keyof typeof providers;

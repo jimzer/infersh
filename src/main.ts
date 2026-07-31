@@ -6,15 +6,19 @@ import { Command } from "effect/unstable/cli";
 import { FetchHttpClient } from "effect/unstable/http";
 import { runUpdateCheck } from "./autoupdate.ts";
 import * as Bdata from "./bdata.ts";
+import * as Budget from "./budget.ts";
 import { bdataCmd } from "./commands/bdata.ts";
+import { budgetCmd } from "./commands/budget.ts";
 import { falCmd } from "./commands/fal.ts";
 import { groqCmd } from "./commands/groq.ts";
 import { keysCmd } from "./commands/keys.ts";
+import { openrouterCmd } from "./commands/openrouter.ts";
 import { renderCmd } from "./commands/render.ts";
 import { skillsCmd } from "./commands/skills.ts";
 import { updateCmd } from "./commands/update.ts";
 import * as Fal from "./fal.ts";
 import * as Groq from "./groq.ts";
+import * as OpenRouter from "./openrouter.ts";
 import * as Render from "./render.ts";
 import * as Secrets from "./secrets.ts";
 import * as Skills from "./skills.ts";
@@ -33,6 +37,8 @@ const appLayer = Layer.mergeAll(
 	Fal.layer.pipe(Layer.provide(base)),
 	Groq.layer.pipe(Layer.provide(base)),
 	Bdata.layer.pipe(Layer.provide(base)),
+	Budget.layer.pipe(Layer.provide(base)),
+	OpenRouter.layer.pipe(Layer.provide(base)),
 	Render.layer,
 	Skills.layer,
 );
@@ -41,9 +47,11 @@ const inferCmd = Command.make("infer").pipe(
 	Command.withDescription("Run inference providers from the command line."),
 	Command.withSubcommands([
 		bdataCmd,
+		budgetCmd,
 		falCmd,
 		groqCmd,
 		keysCmd,
+		openrouterCmd,
 		renderCmd,
 		skillsCmd,
 		updateCmd,
