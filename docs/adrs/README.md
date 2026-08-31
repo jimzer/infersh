@@ -21,6 +21,8 @@ time to discover and would otherwise be rediscovered the hard way.
 | [14](0014-budget-reports-what-each-provider-exposes.md) | `budget` reports what each provider exposes, and no more |
 | [15](0015-openrouter-over-http-and-unboundable-cost.md) | OpenRouter over HTTP, and why the search command was dropped |
 | [16](0016-ui-blocks-so-the-parent-owns-the-server.md) | `infer ui` blocks, so the parent owns the server |
+| [17](0017-social-datasets-the-docs-are-wrong.md) | The social dataset docs are wrong in three places |
+| [18](0018-keep-playwright-for-now-over-bun-webview.md) | Keep Playwright for now, over Bun.WebView |
 
 ## Writing one
 

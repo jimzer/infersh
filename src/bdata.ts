@@ -26,6 +26,8 @@ const REQUEST_URL = "https://api.brightdata.com/request";
 const DATASET_SCRAPE_URL = "https://api.brightdata.com/datasets/v3/scrape";
 const DATASET_PROGRESS_URL = "https://api.brightdata.com/datasets/v3/progress";
 const DATASET_SNAPSHOT_URL = "https://api.brightdata.com/datasets/v3/snapshot";
+const DATASET_SNAPSHOTS_URL =
+	"https://api.brightdata.com/datasets/v3/snapshots";
 
 /** YouTube videos dataset — backs both collect-by-URL and discover-by-keyword. */
 export const YOUTUBE_VIDEOS_DATASET = "gd_lk56epmy2i5g7lzu0k";
@@ -183,15 +185,39 @@ export const requestBody = (
 	return body;
 };
 
-/** Parses a response body, keeping raw text as text. */
+/**
+ * Parses a response body, keeping raw text as text.
+ *
+ * Dataset jobs that answer inline return **JSON Lines** when there is more
+ * than one row — one object per line, which is not a JSON document. Left
+ * alone it falls through to the raw-text branch and stdout stops being a
+ * single JSON value, breaking the contract every command promises. Parsing it
+ * into an array makes an inline answer indistinguishable from a snapshot
+ * download, which already arrives as an array.
+ */
 export const parseBody = (text: string): unknown => {
 	const trimmed = text.trimStart();
 	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return text;
 	try {
 		return JSON.parse(text);
 	} catch {
-		return text;
+		return parseJsonLines(text) ?? text;
 	}
+};
+
+/** An array when every non-empty line is its own JSON value, else null. */
+export const parseJsonLines = (text: string): ReadonlyArray<unknown> | null => {
+	const lines = text.split("\n").filter((line) => line.trim() !== "");
+	if (lines.length < 2) return null;
+	const rows: unknown[] = [];
+	for (const line of lines) {
+		try {
+			rows.push(JSON.parse(line));
+		} catch {
+			return null;
+		}
+	}
+	return rows;
 };
 
 export interface BdataShape {
@@ -214,7 +240,50 @@ export interface BdataShape {
 		params: DatasetScrapeParams,
 		input: ReadonlyArray<Record<string, unknown>>,
 	) => Effect.Effect<unknown, BdataError>;
+	/** List a dataset's jobs, newest first. */
+	readonly snapshotList: (
+		datasetId: string,
+		options: SnapshotListOptions,
+	) => Effect.Effect<unknown, BdataError>;
+	/** Where one job has got to, without downloading it. */
+	readonly snapshotStatus: (
+		snapshotId: string,
+	) => Effect.Effect<unknown, BdataError>;
+	/** Download a finished job's rows. */
+	readonly snapshotData: (
+		snapshotId: string,
+	) => Effect.Effect<unknown, BdataError>;
+	/** Stop a running job, so it stops collecting billable records. */
+	readonly snapshotCancel: (
+		snapshotId: string,
+	) => Effect.Effect<unknown, BdataError>;
 }
+
+export interface SnapshotListOptions {
+	readonly status?: string;
+	readonly limit?: number;
+	readonly skip?: number;
+}
+
+/** Query string for `/datasets/v3/snapshots`. */
+export const snapshotListQuery = (
+	datasetId: string,
+	options: SnapshotListOptions,
+): string => {
+	const query = new URLSearchParams({ dataset_id: datasetId });
+	if (options.status) query.set("status", options.status);
+	if (options.limit !== undefined) query.set("limit", String(options.limit));
+	if (options.skip !== undefined) query.set("skip", String(options.skip));
+	return query.toString();
+};
+
+/** The four states a job can be in. */
+export const SNAPSHOT_STATUSES = [
+	"starting",
+	"running",
+	"ready",
+	"failed",
+] as const;
 
 export class Bdata extends Context.Service<Bdata, BdataShape>()("Bdata") {}
 
@@ -436,6 +505,64 @@ const make = (options: {
 					return parseBody(text);
 				}),
 			),
+
+		snapshotList: (datasetId, options) =>
+			authorized((key) =>
+				getJson(
+					`${DATASET_SNAPSHOTS_URL}?${snapshotListQuery(datasetId, options)}`,
+					key,
+				),
+			),
+
+		snapshotStatus: (snapshotId) =>
+			authorized((key) =>
+				getJson(`${DATASET_PROGRESS_URL}/${snapshotId}`, key),
+			),
+
+		snapshotData: (snapshotId) =>
+			authorized((key) =>
+				getJson(`${DATASET_SNAPSHOT_URL}/${snapshotId}?format=json`, key),
+			),
+
+		snapshotCancel: (snapshotId) =>
+			authorized((key) =>
+				Effect.gen(function* () {
+					const response = yield* http
+						.execute(
+							HttpClientRequest.post(
+								`${DATASET_SNAPSHOT_URL}/${snapshotId}/cancel`,
+								{ headers: { Authorization: `Bearer ${key}` } },
+							),
+						)
+						.pipe(
+							Effect.mapError(
+								(cause) =>
+									new BdataError({ reason: `Request failed: ${cause}` }),
+							),
+						);
+					const text = yield* response.text.pipe(
+						Effect.mapError(
+							(cause) =>
+								new BdataError({
+									reason: `Could not read the response: ${cause}`,
+								}),
+						),
+					);
+					if (response.status >= 400) {
+						return yield* Effect.fail(
+							new BdataError({
+								reason: `Bright Data returned ${response.status}: ${text.slice(0, 500)}`,
+							}),
+						);
+					}
+					// The endpoint answers with the bare word OK, which is not JSON.
+					return {
+						snapshot_id: snapshotId,
+						cancelled: true,
+						response: text.trim(),
+					};
+				}),
+			),
 	};
 };
 
@@ -513,6 +640,224 @@ export interface DiscoverInputOptions {
 	readonly endDate?: string;
 	readonly country?: string;
 }
+
+// --- X (Twitter) and Reddit datasets ---------------------------------------
+
+/** X posts — backs collect-by-URL and both discovery routes. */
+export const X_POSTS_DATASET = "gd_lwxkxvnf1cynvib9co";
+/** Reddit posts — backs collect-by-URL, keyword and subreddit discovery. */
+export const REDDIT_POSTS_DATASET = "gd_lvz8ah06191smkebj4";
+/** Reddit comments — a separate dataset from posts, with its own record shape. */
+export const REDDIT_COMMENTS_DATASET = "gd_lvzdpsdlw09j6t702";
+/** YouTube comments — separate from the videos dataset. */
+export const YOUTUBE_COMMENTS_DATASET = "gd_lk9q0ew71spt1mxywf";
+/** LinkedIn posts — one dataset, discovered by company URL or by profile URL. */
+export const LINKEDIN_POSTS_DATASET = "gd_lyy3tktm25m4avu764";
+export const LINKEDIN_COMPANIES_DATASET = "gd_l1vikfnt1wgvvqz95w";
+export const LINKEDIN_PROFILES_DATASET = "gd_l1viktl72bvl7bjuj0";
+export const LINKEDIN_JOBS_DATASET = "gd_lpfll7v5hcqtkxl6l";
+/** ChatGPT answers with citations, billed per prompt rather than per token. */
+export const CHATGPT_DATASET = "gd_m7aof0k82r803d5bjm";
+
+/**
+ * Friendly names for the datasets this CLI drives.
+ *
+ * `snapshot list` needs a dataset id, and nobody remembers `gd_lwxkxvnf1cynvib9co`.
+ * A raw id is still accepted, so an id this map does not know still works.
+ */
+export const DATASETS: Readonly<Record<string, string>> = {
+	x: X_POSTS_DATASET,
+	reddit: REDDIT_POSTS_DATASET,
+	"reddit-comments": REDDIT_COMMENTS_DATASET,
+	youtube: YOUTUBE_VIDEOS_DATASET,
+	"youtube-comments": YOUTUBE_COMMENTS_DATASET,
+	linkedin: LINKEDIN_POSTS_DATASET,
+	"linkedin-companies": LINKEDIN_COMPANIES_DATASET,
+	"linkedin-profiles": LINKEDIN_PROFILES_DATASET,
+	"linkedin-jobs": LINKEDIN_JOBS_DATASET,
+	chatgpt: CHATGPT_DATASET,
+};
+
+/** Resolves a friendly dataset name, passing an unknown `gd_` id through. */
+export const resolveDataset = (nameOrId: string): string =>
+	DATASETS[nameOrId] ?? nameOrId;
+
+/**
+ * Capitalised, and `Rising` exists.
+ *
+ * The published docs say `new`, `top`, `hot`; the API rejects all three with
+ * "This value is not allowed". These are the values it actually accepts.
+ */
+export const REDDIT_SORTS = ["Hot", "New", "Top", "Rising"] as const;
+
+/** Date windows the keyword search accepts, exactly as spelled. */
+export const REDDIT_DATES = [
+	"Past hour",
+	"Past day",
+	"Past week",
+	"Past month",
+	"Past year",
+	"All time",
+] as const;
+
+export interface DateWindow {
+	readonly startDate?: string;
+	readonly endDate?: string;
+}
+
+/** Input rows keyed only by URL — X posts, Reddit posts. */
+export const urlInput = (
+	urls: ReadonlyArray<string>,
+): ReadonlyArray<Record<string, unknown>> => urls.map((url) => ({ url }));
+
+/** Input rows for discovering X posts from one profile each. */
+export const xProfileInput = (
+	urls: ReadonlyArray<string>,
+	window: DateWindow,
+): ReadonlyArray<Record<string, unknown>> =>
+	urls.map((url) => {
+		const row: Record<string, unknown> = { url };
+		if (window.startDate) row.start_date = window.startDate;
+		if (window.endDate) row.end_date = window.endDate;
+		return row;
+	});
+
+export interface RedditCommentsOptions {
+	readonly daysBack?: number;
+	readonly sortBy?: string;
+}
+
+/** Input rows for collecting the comments under a Reddit post. */
+export const redditCommentsInput = (
+	urls: ReadonlyArray<string>,
+	options: RedditCommentsOptions,
+): ReadonlyArray<Record<string, unknown>> =>
+	urls.map((url) => {
+		const row: Record<string, unknown> = { url };
+		if (options.daysBack !== undefined) row.days_back = options.daysBack;
+		if (options.sortBy) row.sort_by = options.sortBy;
+		return row;
+	});
+
+export interface RedditKeywordOptions {
+	/** Required for the same reason YouTube's is — see `docs/adrs/0011`. */
+	readonly numOfPosts: number;
+	readonly date?: string;
+}
+
+/** Input rows for discovering Reddit posts by keyword. */
+export const redditKeywordInput = (
+	keywords: ReadonlyArray<string>,
+	options: RedditKeywordOptions,
+): ReadonlyArray<Record<string, unknown>> =>
+	keywords.map((keyword) => {
+		const row: Record<string, unknown> = {
+			keyword,
+			num_of_posts: options.numOfPosts,
+		};
+		// The API rejects an empty string here, so the key is omitted entirely
+		// rather than sent blank.
+		if (options.date) row.date = options.date;
+		return row;
+	});
+
+/** Input rows for discovering Reddit posts from a subreddit. */
+export const redditSubredditInput = (
+	urls: ReadonlyArray<string>,
+	options: { readonly sortBy?: string },
+): ReadonlyArray<Record<string, unknown>> =>
+	urls.map((url) => {
+		const row: Record<string, unknown> = { url };
+		if (options.sortBy) row.sort_by = options.sortBy;
+		return row;
+	});
+
+// --- LinkedIn --------------------------------------------------------------
+
+/** Which discovery route a LinkedIn URL belongs to, or null if neither. */
+export const linkedinUrlKind = (url: string): "company" | "profile" | null => {
+	if (/linkedin\.com\/(company|school|showcase)\//i.test(url)) return "company";
+	if (/linkedin\.com\/in\//i.test(url)) return "profile";
+	return null;
+};
+
+export interface LinkedinPostsOptions extends DateWindow {
+	/** Profile route only: drop reshares, keeping what the person wrote. */
+	readonly authoredOnly?: boolean;
+}
+
+/** Input rows for discovering LinkedIn posts from a company or profile. */
+export const linkedinPostsInput = (
+	urls: ReadonlyArray<string>,
+	options: LinkedinPostsOptions,
+): ReadonlyArray<Record<string, unknown>> =>
+	urls.map((url) => {
+		const row: Record<string, unknown> = { url };
+		if (options.startDate) row.start_date = options.startDate;
+		if (options.endDate) row.end_date = options.endDate;
+		if (options.authoredOnly) row.only_authored_posts = true;
+		return row;
+	});
+
+export interface LinkedinJobsOptions {
+	/** Required by the API even when a keyword is given. */
+	readonly location: string;
+	readonly keyword?: string;
+	readonly country?: string;
+	readonly timeRange?: string;
+	readonly jobType?: string;
+	readonly experienceLevel?: string;
+	readonly remote?: string;
+	readonly company?: string;
+}
+
+/**
+ * Input rows for discovering LinkedIn jobs.
+ *
+ * `location` is the required field, not `keyword` — a keyword-less search of a
+ * place is valid, a keyword without a place is not.
+ */
+export const linkedinJobsInput = (
+	options: LinkedinJobsOptions,
+): ReadonlyArray<Record<string, unknown>> => {
+	const row: Record<string, unknown> = { location: options.location };
+	if (options.keyword) row.keyword = options.keyword;
+	if (options.country) row.country = options.country;
+	if (options.timeRange) row.time_range = options.timeRange;
+	if (options.jobType) row.job_type = options.jobType;
+	if (options.experienceLevel) row.experience_level = options.experienceLevel;
+	if (options.remote) row.remote = options.remote;
+	if (options.company) row.company = options.company;
+	return [row];
+};
+
+// --- ChatGPT ---------------------------------------------------------------
+
+/** The dataset rejects any other value here, so it is never a caller's choice. */
+const CHATGPT_URL = "https://chatgpt.com/";
+
+export interface ChatgptOptions {
+	readonly country?: string;
+	readonly additionalPrompt?: string;
+	/** Defaults to true API-side; sent only when explicitly turned off. */
+	readonly webSearch?: boolean;
+	readonly requireSources?: boolean;
+}
+
+/** Input rows for asking ChatGPT a question and getting its citations back. */
+export const chatgptInput = (
+	prompts: ReadonlyArray<string>,
+	options: ChatgptOptions,
+): ReadonlyArray<Record<string, unknown>> =>
+	prompts.map((prompt) => {
+		const row: Record<string, unknown> = { url: CHATGPT_URL, prompt };
+		if (options.country) row.country = options.country;
+		if (options.additionalPrompt)
+			row.additional_prompt = options.additionalPrompt;
+		if (options.webSearch === false) row.web_search = false;
+		if (options.requireSources) row.require_sources = true;
+		return row;
+	});
 
 /** Input rows for discovering YouTube videos by keyword. */
 export const discoverInput = (
