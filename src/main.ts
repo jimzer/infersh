@@ -24,7 +24,12 @@ import * as Render from "./render.ts";
 import * as Secrets from "./secrets.ts";
 import * as Skills from "./skills.ts";
 import * as Ui from "./ui.ts";
-import { VERSION } from "./version.ts";
+import { BUILD_BUN_VERSION, bunUpgradeNotice, VERSION } from "./version.ts";
+
+// Printed before anything runs, so it precedes the TypeError it would explain
+// rather than trailing after it.
+const bunNotice = bunUpgradeNotice(Bun.version, BUILD_BUN_VERSION);
+if (bunNotice !== null) process.stderr.write(`${bunNotice}\n\n`);
 
 // Secrets and the HTTP client are needed both directly by commands and by the
 // fal layer, so they are merged in rather than only provided underneath it.

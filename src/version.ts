@@ -56,3 +56,31 @@ export const compare = (a: string, b: string): number => {
 /** True when `candidate` is strictly newer than `current`. */
 export const isNewer = (candidate: string, current: string): boolean =>
 	compare(candidate, current) > 0;
+
+declare const __BUN_VERSION__: string;
+
+/**
+ * The Bun that built this bundle, or `null` when running from source.
+ *
+ * Stamped by `just bundle` the same way `__VERSION__` is, so a release
+ * records the runtime it was actually compiled against.
+ */
+export const BUILD_BUN_VERSION: string | null =
+	typeof __BUN_VERSION__ === "string" ? __BUN_VERSION__ : null;
+
+/**
+ * A warning when the running Bun is older than the one this bundle was built
+ * with, else `null`.
+ *
+ * Only *older* matters: the bundle may call APIs that did not exist yet, and
+ * that surfaces as a bare `TypeError` deep in a command. A newer Bun is fine,
+ * and running from source has nothing to compare against.
+ */
+export const bunUpgradeNotice = (
+	running: string,
+	builtWith: string | null,
+): string | null => {
+	if (builtWith === null) return null;
+	if (compare(running, builtWith) >= 0) return null;
+	return `infer ${VERSION} was built with Bun ${builtWith}, but this is Bun ${running}.\nCommands using newer Bun APIs may fail. Upgrade with: bun upgrade`;
+};

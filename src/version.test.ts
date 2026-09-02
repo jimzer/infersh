@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { compare, isDev, isNewer, normalize, VERSION } from "./version.ts";
+import {
+	bunUpgradeNotice,
+	compare,
+	isDev,
+	isNewer,
+	normalize,
+	VERSION,
+} from "./version.ts";
 
 describe("normalize", () => {
 	test("strips a leading v", () => {
@@ -56,5 +63,40 @@ describe("VERSION", () => {
 
 	test("a real version is not dev", () => {
 		expect(isDev("0.2.0")).toBe(false);
+	});
+});
+
+describe("bunUpgradeNotice", () => {
+	test("says nothing when running from source", () => {
+		// Nothing was stamped, so there is no requirement to compare against.
+		expect(bunUpgradeNotice("1.2.0", null)).toBeNull();
+	});
+
+	test("says nothing on the exact build version", () => {
+		expect(bunUpgradeNotice("1.4.0", "1.4.0")).toBeNull();
+	});
+
+	test("says nothing on a newer Bun", () => {
+		// Newer is fine: the bundle only risks APIs that did not exist yet.
+		expect(bunUpgradeNotice("1.5.0", "1.4.0")).toBeNull();
+		expect(bunUpgradeNotice("1.4.1", "1.4.0")).toBeNull();
+		expect(bunUpgradeNotice("2.0.0", "1.4.0")).toBeNull();
+	});
+
+	test("warns on an older Bun, naming both versions and the fix", () => {
+		const notice = bunUpgradeNotice("1.3.14", "1.4.0");
+		expect(notice).toContain("1.4.0");
+		expect(notice).toContain("1.3.14");
+		expect(notice).toContain("bun upgrade");
+	});
+
+	test("compares numerically, not lexically", () => {
+		// The bug a string compare would hit: "1.10.0" < "1.9.0" alphabetically.
+		expect(bunUpgradeNotice("1.10.0", "1.9.0")).toBeNull();
+		expect(bunUpgradeNotice("1.9.0", "1.10.0")).not.toBeNull();
+	});
+
+	test("tolerates a canary suffix on the running version", () => {
+		expect(bunUpgradeNotice("1.4.0-canary.99", "1.4.0")).toBeNull();
 	});
 });

@@ -3,6 +3,10 @@ set shell := ["bash", "-uc"]
 # Version stamped into the bundle. Overridden by the release workflow with the git tag.
 version := `bun -e "console.log(require('./package.json').version)"`
 
+# The Bun that builds the bundle is stamped into it, so the CLI can warn when
+# it is later run on an older Bun than it was compiled against.
+bun_version := `bun --version`
+
 _default:
     @just --list
 
@@ -34,6 +38,7 @@ bundle v=version:
         --target=bun \
         --minify \
         --define __VERSION__='"{{v}}"' \
+        --define __BUN_VERSION__='"{{bun_version}}"' \
         --outfile dist/infer.js
     @chmod +x dist/infer.js
     @echo "built dist/infer.js v{{v}} ($(wc -c < dist/infer.js | tr -d ' ') bytes)"
