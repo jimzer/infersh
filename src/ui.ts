@@ -18,8 +18,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Console, Context, Data, Effect, Layer } from "effect";
+import { escapeForScript, inlineScript } from "./html.ts";
 import { bareImports } from "./render.ts";
-import { inlineScript, TAILWIND_NAME, TAILWIND_PACKAGE } from "./tailwind.ts";
+import { TAILWIND_NAME, TAILWIND_PACKAGE } from "./tailwind.ts";
 // Embedded as text: the bundler copies the characters and never follows the
 // import of `./index.html` inside, which only exists in the staged temp
 // directory. This file must therefore never be imported normally.
@@ -82,16 +83,6 @@ export const newToken = (): string =>
 	Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) =>
 		byte.toString(16).padStart(2, "0"),
 	).join("");
-
-/**
- * Escapes a JSON string for embedding in a `<script>` element.
- *
- * `</script>` inside a string would close the element early. Escaping every
- * `<` is blunt but total, and survives a round trip because `<` is
- * ordinary JSON.
- */
-export const escapeForScript = (json: string): string =>
-	json.replace(/</g, "\\u003c");
 
 const BASE_CSS = `
 :root { color-scheme: light dark; --infer-fg: #111; --infer-bg: #fff; --infer-line: #d4d4d8; }

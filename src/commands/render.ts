@@ -1,8 +1,8 @@
 /**
- * `infer render` — turn TSX compositions into images and PDFs.
+ * `infer render` — turn TSX compositions into images, PDFs, pages and videos.
  */
 
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { Console, Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import { emitJson, jsonFlag } from "../output.ts";
@@ -627,16 +627,128 @@ company licence — see https://remotion.pro`,
 	]),
 );
 
-export const renderCmd = Command.make("render").pipe(
+// --- html -----------------------------------------------------------------
+
+const htmlCmd = Command.make(
+	"html",
+	{
+		composition: Argument.String("composition").pipe(
+			Argument.optional,
+			Argument.withDescription(COMPOSITION_NOTE),
+		),
+		output: Flag.String("output").pipe(
+			Flag.withAlias("o"),
+			Flag.withMetavar("path"),
+			Flag.optional,
+			Flag.withDescription(
+				"Where to write the page. Defaults to out/page.html.",
+			),
+		),
+		props: sharedFlags.props,
+		assets: Flag.String("assets").pipe(
+			Flag.withMetavar("dir"),
+			Flag.optional,
+			Flag.withDescription(
+				'Directory of local files the composition refers to by path, such as src="logo.png". Any string in the composition or the props that names a file here is embedded as a data URI, so the page carries it. Files imported with `import logo from "./logo.png"` are embedded without this.',
+			),
+		),
+		head: sharedFlags.head,
+		noTailwind: sharedFlags.noTailwind,
+		title: Flag.String("title").pipe(
+			Flag.withMetavar("text"),
+			Flag.optional,
+			Flag.withDescription(
+				"The page's <title>. Defaults to the composition's file name.",
+			),
+		),
+		json: jsonFlag,
+	},
+	(config) =>
+		Effect.gen(function* () {
+			const render = yield* Render;
+			const source = yield* resolveSource(config.composition);
+			const props = yield* resolveProps(config.props);
+			const output = Option.getOrElse(config.output, () => "out/page.html");
+			const title = Option.getOrElse(config.title, () =>
+				source.path === undefined
+					? "page"
+					: basename(source.path).replace(/\.[^.]+$/, ""),
+			);
+
+			const written = yield* render.toHtml({
+				source,
+				props,
+				assetDir: Option.getOrUndefined(config.assets),
+				head: Option.getOrUndefined(config.head),
+				tailwind: !config.noTailwind,
+				title,
+				outputPath: resolve(output),
+			});
+			if (config.json) {
+				return yield* emitJson({
+					output: written,
+					kind: "html",
+					bytes: Bun.file(written).size,
+					title,
+				});
+			}
+			yield* Console.log(written);
+		}),
+).pipe(
 	Command.withShortDescription(
-		"Render TSX compositions to images, PDFs and videos.",
+		"Render a composition to one self-contained HTML file.",
 	),
 	Command.withDescription(
-		`Turn a React TSX component into an image or a PDF.
+		`Render a TSX composition to a single HTML file that works anywhere.
+
+Unlike image and pdf, the result stays alive: the composition is bundled
+with React into one inline script and mounted in the browser, so state,
+click handlers and animations all work.
+
+Everything is inlined — the script, Tailwind, imported images and fonts,
+CSS the composition imports, and files under --assets that it names — so
+the file opens offline, from any folder, with nothing beside it. Only
+URLs that are already absolute (https://...) are left for the browser
+to fetch.
+
+The same composition renders to image, pdf and html with the same
+--props. Paths assembled at runtime, like \`img/\${n}.png\`, cannot be
+embedded: import the file, or write each path out in full.
+
+Expect a few hundred KB before any assets: React and Tailwind are both
+inside the file. Only the written path goes to stdout.`,
+	),
+	Command.withExamples([
+		{
+			command: "infer render html card.tsx -o card.html",
+			description: "Render a composition to a portable page",
+		},
+		{
+			command: `infer render html dashboard.tsx --props data.json`,
+			description: "Bake data into the page as props",
+		},
+		{
+			command: "infer render html card.tsx --assets ./public",
+			description: "Embed local images the composition refers to by path",
+		},
+		{
+			command: "cat card.tsx | infer render html - -o card.html",
+			description: "Read the composition from stdin",
+		},
+	]),
+);
+
+export const renderCmd = Command.make("render").pipe(
+	Command.withShortDescription(
+		"Render TSX compositions to images, PDFs, HTML pages and videos.",
+	),
+	Command.withDescription(
+		`Turn a React TSX component into an image, a PDF, a portable HTML page
+or a video.
 
 A composition is a .tsx file with a default export taking props. It may
 import other .tsx files and any npm package; both are resolved for you,
 in isolation from whatever project the file happens to live in.`,
 	),
-	Command.withSubcommands([imageCmd, pdfCmd, videoCmd]),
+	Command.withSubcommands([imageCmd, pdfCmd, htmlCmd, videoCmd]),
 );

@@ -68,6 +68,10 @@ function Pick() {
 createRoot(document.getElementById("root")!).render(<Pick />);
 ```
 
+To hand the user a page to **keep** rather than ask them something, use
+`infer render html` instead: it writes one self-contained file and needs no
+running CLI. See [render.md](render.md).
+
 Tailwind v4 is inlined by default, so class names work with nothing to set up
 and no network. If you know Tailwind from v3: `bg-opacity-*` is gone (use
 `bg-black/50`), and a bare `border` takes the text colour rather than grey.

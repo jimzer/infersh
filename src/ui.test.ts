@@ -6,7 +6,6 @@ import { Effect } from "effect";
 import {
 	buildPage,
 	describeTimeout,
-	escapeForScript,
 	flattenApp,
 	newToken,
 	parseServeUrl,
@@ -31,21 +30,6 @@ describe("newToken", () => {
 	test("does not repeat, since it is the only access control there is", () => {
 		const seen = new Set(Array.from({ length: 200 }, () => newToken()));
 		expect(seen.size).toBe(200);
-	});
-});
-
-describe("escapeForScript", () => {
-	test("neutralises a closing tag hidden in the data", () => {
-		const json = JSON.stringify({ post: "</script><script>alert(1)</script>" });
-		const escaped = escapeForScript(json);
-		expect(escaped).not.toContain("</script>");
-		expect(JSON.parse(escaped).post).toBe("</script><script>alert(1)</script>");
-	});
-
-	test("leaves ordinary JSON parseable", () => {
-		expect(JSON.parse(escapeForScript(JSON.stringify({ a: 1 })))).toEqual({
-			a: 1,
-		});
 	});
 });
 

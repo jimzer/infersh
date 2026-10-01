@@ -24,7 +24,7 @@ export const formatFromPath = (path: string): ImageFormat => {
  * Wraps rendered markup in a document, pointing assets at the intercepted origin.
  *
  * `tailwindScript` is Tailwind's browser build, inlined so a render needs no
- * network. The `</script` rewrite mirrors `inlineScript` in `tailwind.ts`,
+ * network. The `</script` rewrite mirrors `inlineScript` in `html.ts`,
  * which this file cannot import: it is embedded as text and must stay
  * dependency-free.
  */

@@ -69,7 +69,7 @@ its case: a first version lowered `</SCRIPT` and so changed the value of any
 string containing it. A test caught that.
 
 `render-shared.ts` is embedded as text (ADR 12) and cannot import
-`tailwind.ts`, so the escape exists twice. Both copies are tested.
+`html.ts`, so the escape exists twice. Both copies are tested.
 
 **`--no-tailwind` no longer means "offline".** The help text used to recommend
 it for offline renders; offline now works by default, and the flag only opts

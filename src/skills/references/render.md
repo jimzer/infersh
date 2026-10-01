@@ -1,12 +1,15 @@
 # infer render
 
-Turn a TSX component into an image, a PDF or a video.
+Turn a TSX component into an image, a PDF, a portable HTML page or a video.
 
 ```bash
-infer render image  card.tsx    -o card.png
-infer render pdf    invoice.tsx -o invoice.pdf
-infer render video  intro.tsx   -o intro.mp4
+infer render image  card.tsx      -o card.png
+infer render pdf    invoice.tsx   -o invoice.pdf
+infer render html   dashboard.tsx -o dashboard.html
+infer render video  intro.tsx     -o intro.mp4
 ```
+
+The same composition and `--props` work for image, pdf and html.
 
 Run `infer render <sub> --help` for flags.
 
@@ -65,6 +68,31 @@ Sizing is the thing to get right:
 - Backgrounds are always printed, so a screen-styled composition looks the same
   on paper.
 
+## html
+
+One self-contained `.html` file that **stays interactive**: the composition is
+bundled with React into an inline script and mounted in the browser, so
+`useState`, click handlers, tabs, filters and charts that respond to the mouse
+all work — none of which survive as a PNG or PDF.
+
+Everything is inside the file: the script, Tailwind, CSS the composition
+imports, imported images and fonts, and files under `--assets` that it names.
+It opens offline, from any folder, with nothing beside it — so it can be
+emailed, attached or archived. Only already-absolute URLs (`https://…`) are
+left for the browser to fetch.
+
+- **Pick html over image/pdf** when the reader should interact: explore data,
+  switch views, expand details. Pick image/pdf for something fixed to look at
+  or print.
+- **Pick html over `infer ui`** when the result is a file to keep or hand to
+  someone. `ui` is for asking the user a question and getting an answer back;
+  it needs the CLI running. html needs nothing once written.
+- Expect a few hundred KB before any assets — React (~216 KB) and Tailwind
+  (~280 KB) are both inside. `--no-tailwind` drops the latter.
+- Bake data in through `--props`; the page reads it as the component's props,
+  exactly like image and pdf.
+- A warm render takes well under a second: no browser is launched.
+
 ## video
 
 Video uses Remotion, so the composition can animate:
@@ -121,7 +149,7 @@ may be affected, tell them plainly — do not bury it.
 
 ## Assets
 
-This is the one place the three subcommands differ, and it is easy to get wrong.
+This is the one place the subcommands differ, and it is easy to get wrong.
 
 **image and pdf** — pass `--assets <dir>` and reference files by **plain
 relative URL**:
@@ -134,6 +162,20 @@ infer render image card.tsx --assets ./public
 <img src="img/logo.png" />        {/* resolved against the assets dir */}
 ```
 
+**html** — the same `--assets` and plain relative URLs, but each file is
+**embedded** in the page as a data URI, so the page carries it. A string in the
+composition or in `--props` is embedded when it names a file in the directory.
+Importing works too and needs no `--assets` at all:
+
+```tsx
+import logo from "./logo.png";    // always embedded, the most robust form
+<img src={logo} />
+```
+
+A path **assembled at runtime** — `` `img/${n}.png` `` — cannot be seen, so it
+is not embedded and will not load. Write each path out in full, or import it.
+Files over 5 MB are embedded with a warning: base64 grows them by a third.
+
 **video** — pass `--assets <dir>` and use Remotion's `staticFile()`:
 
 ```tsx
@@ -142,7 +184,8 @@ import { staticFile, Img } from "remotion";
 <Img src={staticFile("img/logo.png")} />
 ```
 
-Nothing is copied in either case, so a large asset folder costs nothing.
+For image, pdf and video nothing is copied, so a large asset folder costs
+nothing. For html only the files the composition names are embedded.
 
 ## Requirements and cost
 
@@ -152,7 +195,7 @@ Nothing is copied in either case, so a large asset folder costs nothing.
   a Chrome build, then later renders are a few seconds. Prefer `--frame` while
   iterating.
 - Fonts come from the system unless you inject a `<link>` with `--head`.
-- **Tailwind is v4** for image and pdf, inlined into the page, so class names
+- **Tailwind is v4** for image, pdf and html, inlined into the page, so class names
   work offline with no setup. Most Tailwind you have seen is v3; the
   differences that bite:
   - `bg-opacity-50` and friends are gone and silently do nothing. Use the slash
