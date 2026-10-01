@@ -84,12 +84,13 @@ what makes it useful for checking a composition mid-iteration. Verified to be
 frame-exact: the still at frame 30 is pixel-identical to frame 30 extracted
 from the encoded video.
 
-Temp directories are removed on success *and* failure by
-`Effect.acquireUseRelease`, verified by rendering repeatedly and after
-deliberate failures with nothing left behind. `rmSync` unlinks the
-`node_modules/.remotion` symlink rather than following it, so the shared
-browser cache survives — worth knowing, because following it would silently
-delete a 193 MB download on every render.
+Temp directories are removed on success *and* failure — originally by
+`Effect.acquireUseRelease`, now by `FileSystem.makeTempDirectoryScoped`
+(ADR 23) — verified by rendering repeatedly and after deliberate failures with
+nothing left behind. The cleanup unlinks the `node_modules/.remotion` symlink
+rather than following it, so the shared browser cache survives — worth
+knowing, because following it would silently delete a 193 MB download on every
+render. That was re-verified when the cleanup changed.
 
 The Chrome Headless Shell that Remotion downloads is shared across renders by
 symlinking `$XDG_CACHE_HOME/infer/remotion` in as `node_modules/.remotion`.

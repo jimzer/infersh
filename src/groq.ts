@@ -19,7 +19,10 @@ import {
 	type Scope,
 } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
+import { formatBytes } from "./output.ts";
 import { lazyKey, MissingKeyError, type Secrets } from "./secrets.ts";
+import { run } from "./stage.ts";
 
 const TRANSCRIPTIONS_URL =
 	"https://api.groq.com/openai/v1/audio/transcriptions";
@@ -116,13 +119,6 @@ export const ffmpegArgs = (
 	output,
 ];
 
-/** Human-readable byte count for size warnings. */
-export const formatBytes = (bytes: number): string => {
-	if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-	if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-	return `${bytes} B`;
-};
-
 /** True when Groq would reject the direct upload outright. */
 export const exceedsAttachmentLimit = (bytes: number): boolean =>
 	bytes > MAX_ATTACHMENT_BYTES;
@@ -142,11 +138,12 @@ export interface GroqShape {
 export class Groq extends Context.Service<Groq, GroqShape>()("Groq") {}
 
 const make = (options: {
+	readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
 	readonly http: HttpClient.HttpClient;
 	/** Looked up on first use; see `lazyKey`. */
 	readonly credentials: Effect.Effect<Option.Option<string>>;
 }): GroqShape => {
-	const { http, credentials } = options;
+	const { spawner, http, credentials } = options;
 
 	const requireCredentials = Effect.flatMap(
 		credentials,
@@ -172,7 +169,11 @@ const make = (options: {
 	 */
 	const optimize = (
 		input: string,
-	): Effect.Effect<string | null, GroqError, Scope.Scope> =>
+	): Effect.Effect<
+		string | null,
+		GroqError,
+		Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
+	> =>
 		Effect.gen(function* () {
 			const output = yield* Effect.acquireRelease(
 				Effect.sync(() =>
@@ -184,16 +185,9 @@ const make = (options: {
 				(path) => Effect.sync(() => rmSync(path, { force: true })),
 			);
 			// None means ffmpeg could not be started at all, i.e. it is not installed.
-			const result = yield* Effect.tryPromise(async () => {
-				const proc = Bun.spawn([...ffmpegArgs(input, output)], {
-					stdout: "ignore",
-					stderr: "pipe",
-				});
-				const [stderr, code] = await Promise.all([
-					new Response(proc.stderr).text(),
-					proc.exited,
-				]);
-				return { code, stderr };
+			const [command, ...args] = ffmpegArgs(input, output);
+			const result = yield* run(command as string, args, {
+				stdout: "ignore",
 			}).pipe(Effect.option);
 
 			if (Option.isNone(result)) {
@@ -303,18 +297,25 @@ const make = (options: {
 					}
 					return body;
 				}),
+			).pipe(
+				Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
 			),
 	};
 };
 
-export const layer: Layer.Layer<Groq, never, Secrets | HttpClient.HttpClient> =
-	Layer.effect(Groq)(
-		Effect.gen(function* () {
-			const http = yield* HttpClient.HttpClient;
-			const credentials = yield* lazyKey("groq");
-			return make({
-				http,
-				credentials,
-			});
-		}),
-	);
+export const layer: Layer.Layer<
+	Groq,
+	never,
+	Secrets | HttpClient.HttpClient | ChildProcessSpawner.ChildProcessSpawner
+> = Layer.effect(Groq)(
+	Effect.gen(function* () {
+		const http = yield* HttpClient.HttpClient;
+		const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+		const credentials = yield* lazyKey("groq");
+		return make({
+			spawner,
+			http,
+			credentials,
+		});
+	}),
+);

@@ -14,12 +14,27 @@
  * is gone. See `docs/adrs/0016`.
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { Console, Context, Data, Effect, Layer } from "effect";
+import { join } from "node:path";
+import {
+	Console,
+	Context,
+	Data,
+	Effect,
+	type FileSystem,
+	Layer,
+	Schedule,
+} from "effect";
+import { ChildProcess, type ChildProcessSpawner } from "effect/process";
 import { escapeForScript, inlineScript } from "./html.ts";
-import { bareImports } from "./render.ts";
+import { bareImports, isolateComposition } from "./render.ts";
+import {
+	install,
+	type Platform,
+	readFile,
+	run,
+	tempDir,
+	writeFile,
+} from "./stage.ts";
 import { TAILWIND_NAME, TAILWIND_PACKAGE } from "./tailwind.ts";
 // Embedded as text: the bundler copies the characters and never follows the
 // import of `./index.html` inside, which only exists in the staged temp
@@ -212,6 +227,8 @@ export const buildPage = (options: {
 	/** Tailwind's browser build, inlined so the page needs no network. */
 	readonly tailwindScript?: string;
 	readonly head?: string;
+	/** Link the CSS the page imported, which the HTML bundler then serves. */
+	readonly stylesheet?: boolean;
 }): string => {
 	const dataJson =
 		options.data === undefined
@@ -225,6 +242,9 @@ export const buildPage = (options: {
 	// and nothing else. `--no-tailwind` skips it.
 	if (options.tailwindScript !== undefined) {
 		head.push(inlineScript(options.tailwindScript));
+	}
+	if (options.stylesheet) {
+		head.push('<link rel="stylesheet" href="./composition.css">');
 	}
 	if (options.head) head.push(options.head);
 
@@ -246,148 +266,36 @@ ${head.join("\n")}
 
 // --- staging --------------------------------------------------------------
 
-const write = (path: string, contents: string) =>
-	Effect.tryPromise({
-		try: () => Bun.write(path, contents),
-		catch: (cause) =>
-			new UiError({ reason: `Could not write ${path}: ${cause}` }),
-	});
+export interface FlattenedApp {
+	/** The bare specifiers left in the bundle, which *are* its dependencies. */
+	readonly deps: ReadonlyArray<string>;
+	/** Whether the page imported CSS, written beside it as `composition.css`. */
+	readonly css: boolean;
+}
 
 /**
- * Flattens the page and its relative imports into one browser bundle.
+ * Flattens the page and its relative imports into `app.js` inside `dir`.
  *
- * Package imports stay bare and are installed separately; relative imports are
- * inlined, which is what lets the file leave its own project. `render` does
- * the same thing for `target: "bun"`; this one targets a browser, so the two
- * do not share a helper.
- *
- * Returns the bare specifiers left in the bundle, which *are* the page's
- * dependencies — better than guessing them from the original source.
+ * The same pass `render` uses, pointed at a browser: packages stay bare and are
+ * installed separately, relative imports are inlined so the page can leave its
+ * project, and imported files become data URIs. JSX is compiled against the
+ * production runtime the page is served with — Bun's default `jsxDEV` does not
+ * exist there, and every page would die with "jsxDEV is not a function".
  */
 export const flattenApp = (
 	appPath: string,
 	dir: string,
-): Effect.Effect<ReadonlyArray<string>, UiError> =>
+): Effect.Effect<FlattenedApp, UiError, FileSystem.FileSystem> =>
 	Effect.gen(function* () {
-		const entry = resolve(appPath);
-		const exists = yield* Effect.tryPromise({
-			try: () => Bun.file(entry).exists(),
-			catch: () => new UiError({ reason: `Could not read ${entry}` }),
+		const isolated = yield* isolateComposition({ path: appPath }, dir, {
+			target: "browser",
+			productionJsx: true,
+			inlineImports: true,
+			fileName: "app.js",
 		});
-		if (!exists) {
-			return yield* Effect.fail(
-				new UiError({ reason: `Page not found: ${entry}` }),
-			);
-		}
-
-		const built = yield* Effect.tryPromise({
-			try: () =>
-				Bun.build({
-					entrypoints: [entry],
-					target: "browser",
-					packages: "external",
-					// Bun compiles JSX to `jsxDEV` from `react/jsx-dev-runtime` by
-					// default, but the page is served in production mode, where React
-					// resolves that specifier to a build without the export — every
-					// page then dies with "jsxDEV is not a function". This define
-					// switches Bun to `jsx` from `react/jsx-runtime`. The video
-					// renderer hit the identical wall (ADR 12).
-					define: { "process.env.NODE_ENV": JSON.stringify("production") },
-				}),
-			catch: (cause) =>
-				new UiError({ reason: `Could not bundle the page: ${cause}` }),
-		});
-		if (!built.success || built.outputs[0] === undefined) {
-			return yield* Effect.fail(
-				new UiError({
-					reason: `Could not bundle the page:\n${built.logs.map(String).join("\n")}`,
-				}),
-			);
-		}
-		const code = yield* Effect.tryPromise({
-			try: () => built.outputs[0]?.text() as Promise<string>,
-			catch: (cause) =>
-				new UiError({ reason: `Could not read the bundle: ${cause}` }),
-		});
-		yield* write(join(dir, "app.js"), code);
-		return bareImports(code);
-	});
-
-/**
- * Installs the page's packages into the staged directory.
- *
- * This cannot rely on `bun --install=fallback`, even though the child runs
- * with it. Auto-install resolves modules *in process*, and the HTML bundler
- * behind `Bun.serve` resolves from the filesystem, so it never sees them and
- * answers `500 Build Failed`. The same split already bit the video renderer
- * (ADR 12). Warm installs come out of Bun's global cache in well under a
- * second.
- */
-const installDeps = (
-	dir: string,
-	deps: ReadonlyArray<string>,
-): Effect.Effect<void, UiError> =>
-	Effect.gen(function* () {
-		if (deps.length === 0) return;
-		yield* write(
-			join(dir, "package.json"),
-			JSON.stringify({ name: "infer-ui-page", private: true }),
-		);
-		yield* Console.error(
-			`  Installing ${deps.length} package${deps.length === 1 ? "" : "s"}...`,
-		);
-		const result = yield* Effect.tryPromise({
-			try: async () => {
-				const proc = Bun.spawn(["bun", "install", ...deps], {
-					cwd: dir,
-					stdout: "pipe",
-					stderr: "pipe",
-				});
-				const [stderr, code] = await Promise.all([
-					new Response(proc.stderr).text(),
-					proc.exited,
-				]);
-				return { stderr, code };
-			},
-			catch: (cause) =>
-				new UiError({
-					reason: `Could not install the page's packages: ${cause}`,
-				}),
-		});
-		if (result.code !== 0) {
-			return yield* Effect.fail(
-				new UiError({
-					reason: `Could not install the page's packages:\n${result.stderr.trim()}`,
-				}),
-			);
-		}
-	});
-
-/**
- * Reads the Tailwind browser build installed into the staged directory.
- *
- * It is inlined into the page rather than linked, so every renderer embeds
- * Tailwind the same way and a page never fetches it. See `docs/adrs/0020`.
- */
-const readTailwind = (dir: string): Effect.Effect<string, UiError> =>
-	Effect.tryPromise({
-		try: async () => Bun.file(Bun.resolveSync(TAILWIND_NAME, dir)).text(),
-		catch: (cause) =>
-			new UiError({ reason: `Could not load Tailwind: ${cause}` }),
-	});
-
-const withTempDir = <A, E>(
-	use: (dir: string) => Effect.Effect<A, E>,
-): Effect.Effect<A, E | UiError> =>
-	Effect.acquireUseRelease(
-		Effect.try({
-			try: () => mkdtempSync(join(tmpdir(), "infer-ui-")),
-			catch: (cause) =>
-				new UiError({ reason: `Could not create a temp directory: ${cause}` }),
-		}),
-		use,
-		(dir) => Effect.sync(() => rmSync(dir, { recursive: true, force: true })),
-	);
+		const code = yield* readFile(isolated.path);
+		return { deps: bareImports(code), css: isolated.css };
+	}).pipe(Effect.mapError((error) => new UiError({ reason: error.message })));
 
 // --- tailnet --------------------------------------------------------------
 
@@ -403,26 +311,24 @@ export const parseServeUrl = (output: string): string | null =>
 
 const runTailscale = (
 	args: ReadonlyArray<string>,
-): Effect.Effect<{ stdout: string; code: number }, UiError> =>
-	Effect.tryPromise({
-		try: async () => {
-			const proc = Bun.spawn(["tailscale", ...args], {
-				stdout: "pipe",
-				stderr: "pipe",
-			});
-			const [stdout, stderr, code] = await Promise.all([
-				new Response(proc.stdout).text(),
-				new Response(proc.stderr).text(),
-				proc.exited,
-			]);
-			return { stdout: `${stdout}\n${stderr}`, code };
-		},
-		catch: () =>
-			new UiError({
-				reason:
-					"--share needs the tailscale command, which is not on PATH.\nInstall Tailscale, or drop --share to stay on localhost.",
-			}),
-	});
+): Effect.Effect<
+	{ stdout: string; code: number },
+	UiError,
+	ChildProcessSpawner.ChildProcessSpawner
+> =>
+	run("tailscale", args).pipe(
+		Effect.map((result) => ({
+			stdout: `${result.stdout}\n${result.stderr}`,
+			code: result.code,
+		})),
+		Effect.mapError(
+			() =>
+				new UiError({
+					reason:
+						"--share needs the tailscale command, which is not on PATH.\nInstall Tailscale, or drop --share to stay on localhost.",
+				}),
+		),
+	);
 
 /**
  * Proxies the local port onto the tailnet over HTTPS.
@@ -432,7 +338,9 @@ const runTailscale = (
  * is on, and HTTPS makes the page a secure context, which is what the
  * clipboard API requires on a phone.
  */
-const startShare = (port: number): Effect.Effect<string, UiError> =>
+const startShare = (
+	port: number,
+): Effect.Effect<string, UiError, ChildProcessSpawner.ChildProcessSpawner> =>
 	Effect.gen(function* () {
 		// `--bg` config lives in tailscaled and outlives this process, so a run
 		// killed hard would leave it behind. Clearing first makes it idempotent.
@@ -460,36 +368,88 @@ const stopShare = Effect.gen(function* () {
 
 // --- running --------------------------------------------------------------
 
-const openInBrowser = (url: string): Effect.Effect<void> =>
-	Effect.sync(() => {
-		try {
-			const opener = process.platform === "darwin" ? "open" : "xdg-open";
-			Bun.spawn([opener, url], { stdout: "ignore", stderr: "ignore" });
-		} catch {}
+const openInBrowser = (
+	url: string,
+): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner> =>
+	run(process.platform === "darwin" ? "open" : "xdg-open", [url], {
+		stdout: "ignore",
+		stderr: "ignore",
+	}).pipe(Effect.ignore);
+
+const STATUSES: ReadonlyArray<UiStatus> = [
+	"submitted",
+	"cancelled",
+	"done",
+	"timeout",
+];
+
+/**
+ * Parses a JSON file the child wrote, failing instead of throwing.
+ *
+ * Deliberately not Effect Schema: it is not otherwise in the bundle, and
+ * pulling it in for two tiny files adds 146 KB — about 6 ms to the startup of
+ * every command.
+ */
+const parseJson = (
+	raw: string,
+): Effect.Effect<Record<string, unknown>, UiError> =>
+	Effect.try({
+		try: () => {
+			const value: unknown = JSON.parse(raw);
+			if (typeof value !== "object" || value === null) throw new Error();
+			return value as Record<string, unknown>;
+		},
+		catch: () => new UiError({ reason: "unreadable" }),
 	});
 
-/** Waits for the child to report the port it actually bound. */
+/** The port in `ready.json`, or a failure while it is missing or partial. */
+const readPort = (raw: string): Effect.Effect<number, UiError> =>
+	Effect.flatMap(parseJson(raw), (value) =>
+		typeof value.port === "number" && Number.isFinite(value.port)
+			? Effect.succeed(value.port)
+			: Effect.fail(new UiError({ reason: "no port yet" })),
+	);
+
+/** The answer in `result.json`. */
+const readAnswer = (
+	raw: string,
+): Effect.Effect<{ status: UiStatus; payload: unknown }, UiError> =>
+	Effect.flatMap(parseJson(raw), (value) =>
+		STATUSES.includes(value.status as UiStatus)
+			? Effect.succeed({
+					status: value.status as UiStatus,
+					payload: value.payload ?? null,
+				})
+			: Effect.fail(new UiError({ reason: "no status" })),
+	);
+
+/**
+ * Waits for the child to report the port it actually bound.
+ *
+ * The file is read while the child may still be writing it, so a missing or
+ * half-written file is simply retried — every 50 ms for up to 15 s, and only
+ * while the child is still alive to write it.
+ */
 const awaitReady = (
 	path: string,
-	isRunning: () => boolean,
-): Effect.Effect<number, UiError> =>
+	isRunning: Effect.Effect<boolean>,
+): Effect.Effect<number, UiError, FileSystem.FileSystem> =>
 	Effect.gen(function* () {
-		for (let attempt = 0; attempt < 300; attempt++) {
-			const file = Bun.file(path);
-			if (yield* Effect.promise(() => file.exists())) {
-				const text = yield* Effect.promise(() => file.text());
-				const port = Number(JSON.parse(text).port);
-				if (Number.isFinite(port)) return port;
-			}
-			if (!isRunning()) break;
-			yield* Effect.sleep("50 millis");
-		}
-		return yield* Effect.fail(
-			new UiError({
-				reason: "The page server never came up; see the output above.",
-			}),
-		);
-	});
+		const raw = yield* readFile(path);
+		return yield* readPort(raw);
+	}).pipe(
+		Effect.retry({
+			schedule: Schedule.spaced("50 millis"),
+			times: 300,
+			while: () => isRunning,
+		}),
+		Effect.mapError(
+			() =>
+				new UiError({
+					reason: "The page server never came up; see the output above.",
+				}),
+		),
+	);
 
 export const describeTimeout = (ms: number): string => {
 	const seconds = Math.round(ms / 1000);
@@ -499,109 +459,115 @@ export const describeTimeout = (ms: number): string => {
 	return rest === 0 ? `${minutes}m` : `${minutes}m${rest}s`;
 };
 
-const make = (): UiShape => ({
-	run: (request) =>
-		withTempDir((dir) =>
-			Effect.gen(function* () {
-				const token = newToken();
-				const deps = yield* flattenApp(request.appPath, dir);
-				yield* installDeps(
-					dir,
-					request.tailwind ? [...deps, TAILWIND_PACKAGE] : deps,
-				);
-				const tailwindScript = request.tailwind
-					? yield* readTailwind(dir)
-					: undefined;
-				yield* write(
-					join(dir, "index.html"),
-					buildPage({
-						token,
-						mode: request.mode,
-						title: request.title,
-						data: request.data,
-						tailwindScript,
-						head: request.head,
-					}),
-				);
-				const childPath = join(dir, "ui-child.ts");
-				yield* write(childPath, CHILD_SOURCE);
-
-				const readyPath = join(dir, "ready.json");
-				const resultPath = join(dir, "result.json");
-				const job = JSON.stringify({
+const make = (platform: Context.Context<Platform>): UiShape => ({
+	run: Effect.fn("Ui.run")(
+		function* (request: UiRequest) {
+			const dir = yield* tempDir("infer-ui-");
+			const token = newToken();
+			const app = yield* flattenApp(request.appPath, dir);
+			yield* install(
+				dir,
+				request.tailwind ? [...app.deps, TAILWIND_PACKAGE] : app.deps,
+			);
+			// Inlined rather than linked, so every renderer embeds Tailwind the
+			// same way and a page never fetches it. See `docs/adrs/0020`.
+			const tailwindScript = request.tailwind
+				? yield* readFile(Bun.resolveSync(TAILWIND_NAME, dir))
+				: undefined;
+			yield* writeFile(
+				join(dir, "index.html"),
+				buildPage({
 					token,
-					port: request.port,
-					timeoutMs: request.timeoutMs,
-					readyPath,
-					resultPath,
-				});
+					mode: request.mode,
+					title: request.title,
+					data: request.data,
+					tailwindScript,
+					head: request.head,
+					stylesheet: app.css,
+				}),
+			);
+			const childPath = join(dir, "ui-child.ts");
+			yield* writeFile(childPath, CHILD_SOURCE);
 
-				const started = Date.now();
+			const readyPath = join(dir, "ready.json");
+			const resultPath = join(dir, "result.json");
+			const job = JSON.stringify({
+				token,
+				port: request.port,
+				timeoutMs: request.timeoutMs,
+				readyPath,
+				resultPath,
+			});
+			const started = Date.now();
 
-				return yield* Effect.acquireUseRelease(
-					Effect.sync(() =>
-						Bun.spawn(["bun", "run", childPath, job], {
-							cwd: dir,
-							stdout: "inherit",
-							stderr: "inherit",
-						}),
-					),
-					(proc) =>
-						Effect.gen(function* () {
-							const port = yield* awaitReady(
-								readyPath,
-								() => proc.exitCode === null,
+			// Scoped: the server is killed when this run ends, however it ends —
+			// an answer, a failure, or Ctrl-C.
+			const server = yield* ChildProcess.make("bun", ["run", childPath, job], {
+				cwd: dir,
+				stdout: "inherit",
+				stderr: "inherit",
+			});
+			const port = yield* awaitReady(
+				readyPath,
+				server.isRunning.pipe(Effect.orElseSucceed(() => false)),
+			);
+
+			const url = yield* Effect.acquireUseRelease(
+				request.share
+					? startShare(port)
+					: Effect.succeed(`http://127.0.0.1:${port}`),
+				(base) =>
+					Effect.gen(function* () {
+						const full = `${base}/${token}`;
+						yield* Console.error(`\n  ${full}\n`);
+						yield* Console.error(
+							`  Waiting for you — ${describeTimeout(request.timeoutMs)} timeout, Ctrl-C to give up.`,
+						);
+						if (request.open) yield* openInBrowser(full);
+
+						const code = yield* server.exitCode;
+						if (code !== 0) {
+							return yield* Effect.fail(
+								new UiError({
+									reason: "The page server failed; see the output above.",
+								}),
 							);
+						}
+						return full;
+					}),
+				() => (request.share ? stopShare : Effect.void),
+			);
 
-							const url = yield* Effect.acquireUseRelease(
-								request.share
-									? startShare(port)
-									: Effect.succeed(`http://127.0.0.1:${port}`),
-								(base) =>
-									Effect.gen(function* () {
-										const full = `${base}/${token}`;
-										yield* Console.error(`\n  ${full}\n`);
-										yield* Console.error(
-											`  Waiting for you — ${describeTimeout(request.timeoutMs)} timeout, Ctrl-C to give up.`,
-										);
-										if (request.open) yield* openInBrowser(full);
-
-										const code = yield* Effect.promise(() => proc.exited);
-										if (code !== 0) {
-											return yield* Effect.fail(
-												new UiError({
-													reason:
-														"The page server failed; see the output above.",
-												}),
-											);
-										}
-										return full;
-									}),
-								() => (request.share ? stopShare : Effect.void),
-							);
-
-							const raw = yield* Effect.tryPromise({
-								try: () => Bun.file(resultPath).text(),
-								catch: () =>
-									new UiError({
-										reason: "The page server left no answer behind.",
-									}),
-							});
-							const parsed = JSON.parse(raw) as {
-								status: UiStatus;
-								payload: unknown;
-							};
-							return {
-								status: parsed.status,
-								payload: parsed.payload ?? null,
-								elapsedMs: Date.now() - started,
-								url,
-							};
-						}),
-					(proc) => Effect.sync(() => proc.kill()),
-				);
-			}),
-		),
+			const answer = yield* readFile(resultPath).pipe(
+				Effect.flatMap(readAnswer),
+				Effect.mapError(
+					() =>
+						new UiError({ reason: "The page server left no answer behind." }),
+				),
+			);
+			return {
+				status: answer.status,
+				payload: answer.payload ?? null,
+				elapsedMs: Date.now() - started,
+				url,
+			};
+		},
+		(effect) =>
+			effect.pipe(
+				Effect.scoped,
+				Effect.mapError((error) =>
+					error._tag === "UiError"
+						? error
+						: new UiError({ reason: error.message }),
+				),
+				Effect.provideContext(platform),
+			),
+	),
 });
 
-export const layer: Layer.Layer<Ui> = Layer.sync(Ui)(make);
+/** Built against the platform services, so `run` needs nothing more. */
+export const layer: Layer.Layer<Ui, never, Platform> = Layer.effect(Ui)(
+	Effect.gen(function* () {
+		return make(yield* Effect.context<Platform>());
+	}),
+);

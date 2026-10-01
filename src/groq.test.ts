@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import {
 	exceedsAttachmentLimit,
 	ffmpegArgs,
-	formatBytes,
 	isSupportedExtension,
 	MAX_ATTACHMENT_BYTES,
 	type TranscribeOptions,
 	validate,
 } from "./groq.ts";
+import { formatBytes } from "./output.ts";
 
 const options = (over: Partial<TranscribeOptions> = {}): TranscribeOptions => ({
 	model: "whisper-large-v3-turbo",

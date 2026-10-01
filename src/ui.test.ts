@@ -2,7 +2,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, type FileSystem } from "effect";
 import {
 	buildPage,
 	describeTimeout,
@@ -122,6 +123,8 @@ describe("describeTimeout", () => {
 });
 
 describe("flattenApp", () => {
+	const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
+		Effect.runPromise(effect.pipe(Effect.provide(BunServices.layer)));
 	const dirs: string[] = [];
 	const temp = (): string => {
 		const dir = mkdtempSync(join(tmpdir(), "infer-ui-test-"));
@@ -148,9 +151,7 @@ describe("flattenApp", () => {
 		);
 
 		const staged = temp();
-		const deps = await Effect.runPromise(
-			flattenApp(join(source, "app.tsx"), staged),
-		);
+		const { deps } = await run(flattenApp(join(source, "app.tsx"), staged));
 
 		expect([...deps].sort()).toEqual(["react", "react-dom"]);
 		const bundle = await Bun.file(join(staged, "app.js")).text();
@@ -167,7 +168,7 @@ describe("flattenApp", () => {
 			'export default () => <p className="x">y</p>;\n',
 		);
 		const staged = temp();
-		await Effect.runPromise(flattenApp(join(source, "app.tsx"), staged));
+		await run(flattenApp(join(source, "app.tsx"), staged));
 		const bundle = await Bun.file(join(staged, "app.js")).text();
 
 		// jsx-dev-runtime has no jsxDEV export in production, and every page would
@@ -176,8 +177,29 @@ describe("flattenApp", () => {
 		expect(bundle).toContain("react/jsx-runtime");
 	});
 
+	test("embeds imported files and reports imported CSS", async () => {
+		// A page used to lose both: an import became a path to a file the move
+		// into the staged directory left behind, and CSS was dropped.
+		const source = temp();
+		await Bun.write(join(source, "logo.svg"), "<svg/>");
+		await Bun.write(join(source, "app.css"), "p { color: red }");
+		await Bun.write(
+			join(source, "app.tsx"),
+			'import "./app.css";\nimport logo from "./logo.svg";\nexport default () => <img src={logo} />;\n',
+		);
+		const staged = temp();
+		const { css } = await run(flattenApp(join(source, "app.tsx"), staged));
+		const bundle = await Bun.file(join(staged, "app.js")).text();
+
+		expect(bundle).toContain("data:image/svg+xml;base64,");
+		expect(css).toBe(true);
+		expect(await Bun.file(join(staged, "composition.css")).text()).toContain(
+			"red",
+		);
+	});
+
 	test("names the missing file rather than failing inside the bundler", async () => {
-		const result = await Effect.runPromise(
+		const result = await run(
 			flattenApp(join(temp(), "nope.tsx"), temp()).pipe(Effect.result),
 		);
 		expect(result._tag).toBe("Failure");

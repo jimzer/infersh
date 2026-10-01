@@ -46,9 +46,9 @@ const appLayer = Layer.mergeAll(
 	Bdata.layer.pipe(Layer.provide(base)),
 	Budget.layer.pipe(Layer.provide(base)),
 	OpenRouter.layer.pipe(Layer.provide(base)),
-	Render.layer,
+	Render.layer.pipe(Layer.provide(base)),
 	Skills.layer,
-	Ui.layer,
+	Ui.layer.pipe(Layer.provide(base)),
 );
 
 const inferCmd = Command.make("infer").pipe(

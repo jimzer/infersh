@@ -8,18 +8,19 @@
  * this CLI. See `docs/adrs/0012`.
  */
 
-import {
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	statSync,
-	symlinkSync,
-} from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
-import { Console, Context, Data, Effect, Layer } from "effect";
+import {
+	Console,
+	Context,
+	Data,
+	Effect,
+	FileSystem,
+	Layer,
+	type Scope,
+} from "effect";
 import { inlineScript } from "./html.ts";
+import { formatBytes } from "./output.ts";
 // Embedded as text: the bundler copies the characters and never follows the
 // imports inside, which is what keeps React and Playwright out of the bundle.
 // Once a module is imported this way it is text for the whole build, so these
@@ -49,6 +50,16 @@ import {
 	VIDEO_CHILD_SOURCE,
 	VIDEO_CORE_DEPS,
 } from "./render-video-source.ts";
+import {
+	cacheDir,
+	install,
+	type Platform,
+	readFile,
+	run,
+	type StageError,
+	tempDir,
+	writeFile,
+} from "./stage.ts";
 import { TAILWIND_NAME, TAILWIND_PACKAGE } from "./tailwind.ts";
 
 export { CODECS };
@@ -183,27 +194,14 @@ export interface RenderShape {
 
 export class Render extends Context.Service<Render, RenderShape>()("Render") {}
 
-const withTempDir = <A, E>(
-	use: (dir: string) => Effect.Effect<A, E>,
-): Effect.Effect<A, E | RenderError> =>
-	Effect.acquireUseRelease(
-		Effect.try({
-			try: () => mkdtempSync(join(tmpdir(), "infer-render-")),
-			catch: (cause) =>
-				new RenderError({
-					reason: `Could not create a temp directory: ${cause}`,
-				}),
-		}),
-		use,
-		(dir) => Effect.sync(() => rmSync(dir, { recursive: true, force: true })),
-	);
+/** Everything a render step can fail with, before it reaches the caller. */
+type Failure = RenderError | StageError;
 
-const write = (path: string, contents: string) =>
-	Effect.tryPromise({
-		try: () => Bun.write(path, contents),
-		catch: (cause) =>
-			new RenderError({ reason: `Could not write ${path}: ${cause}` }),
-	});
+/** Staging failures surface as render failures, with their message intact. */
+const asRenderError = (error: Failure): RenderError =>
+	error._tag === "StageError"
+		? new RenderError({ reason: error.reason })
+		: error;
 
 /**
  * Flattens the composition and its relative imports into one self-contained
@@ -214,7 +212,7 @@ const write = (path: string, contents: string) =>
  * temp directory has no `node_modules` above it, so a render cannot pick up
  * anything from wherever the composition happened to live.
  */
-interface IsolateOptions {
+export interface IsolateOptions {
 	/** `bun` for the image and pdf child; `browser` for an html page. */
 	readonly target?: "bun" | "browser";
 	/**
@@ -232,19 +230,21 @@ interface IsolateOptions {
 	 * temp directory leaves behind.
 	 */
 	readonly inlineImports?: boolean;
+	/** Name of the flattened file inside `dir`. Defaults to `composition.tsx`. */
+	readonly fileName?: string;
 }
 
-interface Isolated {
+export interface Isolated {
 	readonly path: string;
 	/** Whether the composition imported CSS, written beside it as `composition.css`. */
 	readonly css: boolean;
 }
 
-const isolateComposition = (
+export const isolateComposition = (
 	source: CompositionSource,
 	dir: string,
 	options: IsolateOptions = {},
-): Effect.Effect<Isolated, RenderError> =>
+): Effect.Effect<Isolated, Failure, FileSystem.FileSystem> =>
 	Effect.gen(function* () {
 		const entry = yield* Effect.gen(function* () {
 			if (source.inline !== undefined) {
@@ -257,14 +257,14 @@ const isolateComposition = (
 					);
 				}
 				const inlinePath = join(dir, "inline.tsx");
-				yield* write(inlinePath, source.inline);
+				yield* writeFile(inlinePath, source.inline);
 				return inlinePath;
 			}
 			const path = resolve(source.path as string);
-			const exists = yield* Effect.tryPromise({
-				try: () => Bun.file(path).exists(),
-				catch: () => new RenderError({ reason: `Could not read ${path}` }),
-			});
+			const fs = yield* FileSystem.FileSystem;
+			const exists = yield* fs
+				.exists(path)
+				.pipe(Effect.orElseSucceed(() => false));
 			if (!exists) {
 				return yield* Effect.fail(
 					new RenderError({ reason: `Composition not found: ${path}` }),
@@ -335,15 +335,15 @@ const isolateComposition = (
 						bundled,
 						(value) => imported.get(value) ?? null,
 					);
-		const isolated = join(dir, "composition.tsx");
-		yield* write(isolated, code);
+		const isolated = join(dir, options.fileName ?? "composition.tsx");
+		yield* writeFile(isolated, code);
 
 		const stylesheets = built.outputs.filter((output) =>
 			output.path.endsWith(".css"),
 		);
 		if (stylesheets.length > 0) {
 			const css = yield* Effect.forEach(stylesheets, read);
-			yield* write(join(dir, "composition.css"), css.join("\n"));
+			yield* writeFile(join(dir, "composition.css"), css.join("\n"));
 		}
 		return { path: isolated, css: stylesheets.length > 0 };
 	});
@@ -352,120 +352,75 @@ const isolateComposition = (
 const runChild = (
 	request: RenderRequest,
 	job: Record<string, unknown>,
-): Effect.Effect<string, RenderError> =>
-	withTempDir((dir) =>
-		Effect.gen(function* () {
-			// Without this an imported image becomes a path to a file the move
-			// into the temp directory left behind, and renders as a broken icon.
-			const { path: compositionPath } = yield* isolateComposition(
-				request.source,
-				dir,
-				{ inlineImports: true },
-			);
-			yield* write(join(dir, "render-shared.ts"), SHARED_SOURCE);
-			const childPath = join(dir, "render-child.ts");
-			yield* write(childPath, CHILD_SOURCE);
-
-			const payload = JSON.stringify({
-				...job,
-				compositionPath,
-				props: request.props ?? {},
-				outputPath: request.outputPath,
-				assetDir: request.assetDir,
-				head: request.head,
-				playwrightPackage: PLAYWRIGHT_PACKAGE,
-				tailwindPackage: request.tailwind ? TAILWIND_PACKAGE : undefined,
-				waitUntil: request.waitUntil,
-			});
-
-			// stderr is passed straight through rather than collected: a first
-			// render downloads the headless shell for about a minute, and
-			// collected output would make that look like a hang.
-			const code = yield* Effect.tryPromise({
-				try: () =>
-					Bun.spawn(["bun", "--install=fallback", "run", childPath, payload], {
-						cwd: dir,
-						stdout: "ignore",
-						stderr: "inherit",
-					}).exited,
-				catch: (cause) =>
-					new RenderError({ reason: `Could not run the renderer: ${cause}` }),
-			});
-
-			if (code !== 0) {
-				return yield* Effect.fail(
-					new RenderError({ reason: "Render failed; see the output above." }),
-				);
-			}
-			return request.outputPath;
-		}),
-	);
-
-/**
- * Installs the packages a video render needs into the staged directory.
- *
- * Unlike the image path, this cannot rely on `--install=fallback`: Remotion
- * bundles with Rspack, which resolves modules from the filesystem and cannot
- * see anything Bun resolved in-process. Warm installs come from Bun's global
- * cache in well under a second.
- */
-const installDeps = (
-	dir: string,
-	deps: ReadonlyArray<string>,
-): Effect.Effect<void, RenderError> =>
+): Effect.Effect<string, Failure, Platform | Scope.Scope> =>
 	Effect.gen(function* () {
-		yield* Console.error(`Installing ${deps.length} packages...`);
-		const result = yield* Effect.tryPromise({
-			try: async () => {
-				const proc = Bun.spawn(["bun", "install", ...deps], {
-					cwd: dir,
-					stdout: "pipe",
-					stderr: "pipe",
-				});
-				const [stderr, code] = await Promise.all([
-					new Response(proc.stderr).text(),
-					proc.exited,
-				]);
-				return { stderr, code };
-			},
-			catch: (cause) =>
-				new RenderError({ reason: `Could not install dependencies: ${cause}` }),
+		const dir = yield* tempDir("infer-render-");
+		// Without this an imported image becomes a path to a file the move into
+		// the temp directory left behind, and renders as a broken icon.
+		const { path: compositionPath } = yield* isolateComposition(
+			request.source,
+			dir,
+			{ inlineImports: true },
+		);
+		yield* writeFile(join(dir, "render-shared.ts"), SHARED_SOURCE);
+		const childPath = join(dir, "render-child.ts");
+		yield* writeFile(childPath, CHILD_SOURCE);
+
+		const payload = JSON.stringify({
+			...job,
+			compositionPath,
+			props: request.props ?? {},
+			outputPath: request.outputPath,
+			assetDir: request.assetDir,
+			head: request.head,
+			playwrightPackage: PLAYWRIGHT_PACKAGE,
+			tailwindPackage: request.tailwind ? TAILWIND_PACKAGE : undefined,
+			waitUntil: request.waitUntil,
 		});
+
+		// stderr passes straight through rather than being collected: a first
+		// render downloads the headless shell for about a minute, and collected
+		// output would make that look like a hang.
+		const result = yield* run(
+			"bun",
+			["--install=fallback", "run", childPath, payload],
+			{ cwd: dir, stdout: "ignore", stderr: "inherit" },
+		);
 		if (result.code !== 0) {
 			return yield* Effect.fail(
-				new RenderError({
-					reason: `Could not install dependencies:\n${result.stderr.trim()}`,
-				}),
+				new RenderError({ reason: "Render failed; see the output above." }),
 			);
 		}
+		return request.outputPath;
 	});
 
 /**
- * Reuses one Chrome Headless Shell across renders.
+ * Reuses one Chrome Headless Shell across video renders.
  *
  * Remotion downloads a version-pinned browser into `node_modules/.remotion`,
- * which would mean a fresh ~150MB download for every render out of a temp
- * directory. Symlinking a shared cache in makes it a one-time cost.
+ * which would mean a fresh ~190 MB download for every render out of a temp
+ * directory. Symlinking a shared cache in makes it a one-time cost. The temp
+ * directory's cleanup unlinks the symlink without following it — verified, as
+ * following it would delete the shared download on every render.
  */
-const linkBrowserCache = (dir: string): Effect.Effect<void, RenderError> =>
-	Effect.try({
-		try: () => {
-			const cache = join(
-				process.env.XDG_CACHE_HOME || join(homedir(), ".cache"),
-				"infer",
-				"remotion",
-			);
-			mkdirSync(cache, { recursive: true });
-			mkdirSync(join(dir, "node_modules"), { recursive: true });
-			const link = join(dir, "node_modules", ".remotion");
-			rmSync(link, { recursive: true, force: true });
-			symlinkSync(cache, link);
-		},
-		catch: (cause) =>
-			new RenderError({
-				reason: `Could not prepare the browser cache: ${cause}`,
-			}),
-	});
+const linkBrowserCache = (
+	dir: string,
+): Effect.Effect<void, RenderError, FileSystem.FileSystem> =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const cache = join(cacheDir(), "remotion");
+		const link = join(dir, "node_modules", ".remotion");
+		yield* fs.makeDirectory(cache, { recursive: true });
+		yield* fs.makeDirectory(dirname(link), { recursive: true });
+		yield* fs.symlink(cache, link);
+	}).pipe(
+		Effect.mapError(
+			(cause) =>
+				new RenderError({
+					reason: `Could not prepare the browser cache: ${cause.message}`,
+				}),
+		),
+	);
 
 /**
  * The readable part of a failed `Bun.build`.
@@ -477,18 +432,6 @@ const buildFailure = (cause: unknown): string =>
 	cause instanceof AggregateError && cause.errors.length > 0
 		? cause.errors.map(String).join("\n")
 		: String(cause);
-
-const readText = (path: string): Effect.Effect<string, RenderError> =>
-	Effect.tryPromise({
-		try: async () => Bun.file(path).text(),
-		catch: (cause) =>
-			new RenderError({ reason: `Could not read ${path}: ${cause}` }),
-	});
-
-const formatBytes = (bytes: number): string =>
-	bytes < 1024 * 1024
-		? `${(bytes / 1024).toFixed(1)} KB`
-		: `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 /** Above this, an embedded file is worth a warning: base64 grows it by a third. */
 const LARGE_ASSET_BYTES = 5 * 1024 * 1024;
@@ -581,46 +524,48 @@ export const embedAssets = (
 const buildStandalone = (
 	dir: string,
 	indexPath: string,
-): Effect.Effect<string, RenderError> =>
+): Effect.Effect<string, Failure, Platform> =>
 	Effect.gen(function* () {
 		const outdir = join(dir, "dist");
-		const result = yield* Effect.tryPromise({
-			try: async () => {
-				const proc = Bun.spawn(
-					[
-						"bun",
-						"build",
-						indexPath,
-						"--compile",
-						"--target=browser",
-						"--production",
-						`--outdir=${outdir}`,
-					],
-					{ cwd: dir, stdout: "pipe", stderr: "pipe" },
-				);
-				const [stdout, stderr, code] = await Promise.all([
-					new Response(proc.stdout).text(),
-					new Response(proc.stderr).text(),
-					proc.exited,
-				]);
-				return { output: `${stdout}\n${stderr}`.trim(), code };
-			},
-			catch: (cause) =>
-				new RenderError({ reason: `Could not run the bundler: ${cause}` }),
-		});
+		const result = yield* run(
+			"bun",
+			[
+				"build",
+				indexPath,
+				"--compile",
+				"--target=browser",
+				"--production",
+				`--outdir=${outdir}`,
+			],
+			{ cwd: dir },
+		);
 		if (result.code !== 0) {
 			return yield* Effect.fail(
 				new RenderError({
-					reason: `Could not bundle the page:\n${result.output}`,
+					reason: `Could not bundle the page:\n${`${result.stdout}\n${result.stderr}`.trim()}`,
 				}),
 			);
 		}
-		return yield* readText(join(outdir, "index.html"));
+		return yield* readFile(join(outdir, "index.html"));
 	});
 
-const make = (): RenderShape => ({
-	toImage: (request) =>
-		Effect.gen(function* () {
+const make = (platform: Context.Context<Platform>): RenderShape => {
+	/**
+	 * Every render runs in its own scope: its temp directory is removed and any
+	 * child process killed when it ends, however it ends. Staging errors become
+	 * render errors, and the platform services the layer captured are supplied.
+	 */
+	const finish = <A>(
+		effect: Effect.Effect<A, Failure, Platform | Scope.Scope>,
+	): Effect.Effect<A, RenderError> =>
+		effect.pipe(
+			Effect.scoped,
+			Effect.mapError(asRenderError),
+			Effect.provideContext(platform),
+		);
+
+	return {
+		toImage: Effect.fn("Render.toImage")(function* (request: ImageRequest) {
 			yield* Console.error("Rendering image...");
 			return yield* runChild(request, {
 				kind: "image",
@@ -631,10 +576,9 @@ const make = (): RenderShape => ({
 				transparent: request.transparent,
 				quality: request.quality,
 			});
-		}),
+		}, finish),
 
-	toPdf: (request) =>
-		Effect.gen(function* () {
+		toPdf: Effect.fn("Render.toPdf")(function* (request: PdfRequest) {
 			yield* Console.error("Rendering PDF...");
 			return yield* runChild(request, {
 				kind: "pdf",
@@ -645,172 +589,147 @@ const make = (): RenderShape => ({
 				landscape: request.landscape,
 				scale: request.scale,
 			});
-		}),
+		}, finish),
 
-	toHtml: (request) =>
-		withTempDir((dir) =>
-			Effect.gen(function* () {
-				yield* Console.error("Rendering HTML...");
-				const isolated = yield* isolateComposition(request.source, dir, {
-					target: "browser",
-					productionJsx: true,
-					inlineImports: true,
-				});
-				const flattened = yield* readText(isolated.path);
-				if (!hasDefaultExport(flattened)) {
-					return yield* Effect.fail(
-						new RenderError({
-							reason:
-								"The composition must have a default export that is a component.",
-						}),
-					);
-				}
-
-				const { code, props } =
-					request.assetDir === undefined
-						? { code: flattened, props: request.props }
-						: yield* embedAssets(flattened, request.props, request.assetDir);
-				yield* write(isolated.path, code);
-
-				// Bun.build resolves from the filesystem, so the page's packages are
-				// installed for real — auto-install would be invisible to it.
-				const deps = [
-					...new Set([
-						...HTML_CORE_DEPS,
-						...bareImports(code),
-						...(request.tailwind ? [TAILWIND_PACKAGE] : []),
-					]),
-				];
-				yield* write(
-					join(dir, "package.json"),
-					JSON.stringify({ name: "infer-html", private: true }),
-				);
-				yield* installDeps(dir, deps);
-
-				yield* write(join(dir, "entry.ts"), ENTRY_SOURCE);
-				const indexPath = join(dir, "index.html");
-				yield* write(
-					indexPath,
-					htmlDocument({
-						title: request.title,
-						props,
-						head: request.head,
-						stylesheet: isolated.css,
+		toHtml: Effect.fn("Render.toHtml")(function* (request: HtmlRequest) {
+			yield* Console.error("Rendering HTML...");
+			const dir = yield* tempDir("infer-render-");
+			const isolated = yield* isolateComposition(request.source, dir, {
+				target: "browser",
+				productionJsx: true,
+				inlineImports: true,
+			});
+			const flattened = yield* readFile(isolated.path);
+			if (!hasDefaultExport(flattened)) {
+				return yield* Effect.fail(
+					new RenderError({
+						reason:
+							"The composition must have a default export that is a component.",
 					}),
 				);
+			}
 
-				const page = yield* buildStandalone(dir, indexPath);
-				// Added after the build rather than handed to it, so the bundler
-				// never parses 280 KB of someone else's minified script.
-				const html = request.tailwind
-					? prependToHead(
-							page,
-							inlineScript(
-								yield* Effect.tryPromise({
-									try: async () =>
-										Bun.file(Bun.resolveSync(TAILWIND_NAME, dir)).text(),
-									catch: (cause) =>
-										new RenderError({
-											reason: `Could not load Tailwind: ${cause}`,
-										}),
-								}),
-							),
-						)
-					: page;
+			const { code, props } =
+				request.assetDir === undefined
+					? { code: flattened, props: request.props }
+					: yield* embedAssets(flattened, request.props, request.assetDir);
+			yield* writeFile(isolated.path, code);
 
-				yield* Effect.try({
-					try: () =>
-						mkdirSync(dirname(request.outputPath), { recursive: true }),
-					catch: (cause) =>
-						new RenderError({
-							reason: `Could not create ${dirname(request.outputPath)}: ${cause}`,
-						}),
-				});
-				yield* write(request.outputPath, html);
-				return request.outputPath;
-			}),
-		),
+			// The standalone build resolves from the filesystem, so the page's
+			// packages are installed for real.
+			yield* install(dir, [
+				...new Set([
+					...HTML_CORE_DEPS,
+					...bareImports(code),
+					...(request.tailwind ? [TAILWIND_PACKAGE] : []),
+				]),
+			]);
 
-	toVideo: (request) =>
-		withTempDir((dir) =>
-			Effect.gen(function* () {
-				// Remotion's <Img> retries a missing file for ~20s, then fails the
-				// whole render, so an import left as a path is fatal here.
-				const { path: flattened } = yield* isolateComposition(
-					request.source,
-					dir,
-					{ productionJsx: true, inlineImports: true },
-				);
-				const code = yield* Effect.tryPromise({
-					try: () => Bun.file(flattened).text(),
-					catch: (cause) =>
-						new RenderError({ reason: `Could not read the bundle: ${cause}` }),
-				});
+			yield* writeFile(join(dir, "entry.ts"), ENTRY_SOURCE);
+			const indexPath = join(dir, "index.html");
+			yield* writeFile(
+				indexPath,
+				htmlDocument({
+					title: request.title,
+					props,
+					head: request.head,
+					stylesheet: isolated.css,
+				}),
+			);
 
-				// The flattened bundle's remaining bare specifiers *are* the external
-				// dependencies, which beats guessing them from the original source.
-				const deps = [...new Set([...VIDEO_CORE_DEPS, ...bareImports(code)])];
+			const page = yield* buildStandalone(dir, indexPath);
+			// Added after the build rather than handed to it, so the bundler never
+			// parses 280 KB of someone else's minified script.
+			const html = request.tailwind
+				? prependToHead(
+						page,
+						inlineScript(yield* readFile(Bun.resolveSync(TAILWIND_NAME, dir))),
+					)
+				: page;
+			yield* writeFile(request.outputPath, html);
+			return request.outputPath;
+		}, finish),
 
-				yield* write(join(dir, "package.json"), PACKAGE_JSON_SOURCE);
-				yield* write(join(dir, "tsconfig.json"), TSCONFIG_SOURCE);
-				yield* write(join(dir, "Root.tsx"), ROOT_SOURCE);
-				yield* write(join(dir, "index.ts"), INDEX_SOURCE);
-				yield* write(
-					join(dir, "config.json"),
-					JSON.stringify({
-						dimensions: request.dimensions,
-						props: request.props ?? {},
-					}),
-				);
+		toVideo: Effect.fn("Render.toVideo")(function* (request: VideoRequest) {
+			const dir = yield* tempDir("infer-render-");
+			// Remotion's <Img> retries a missing file for ~20s, then fails the
+			// whole render, so an import left as a path is fatal here.
+			const { path: flattened } = yield* isolateComposition(
+				request.source,
+				dir,
+				{ productionJsx: true, inlineImports: true },
+			);
+			const code = yield* readFile(flattened);
 
-				yield* linkBrowserCache(dir);
-				yield* installDeps(dir, deps);
-
-				const childPath = join(dir, "render-video-child.mjs");
-				yield* write(childPath, VIDEO_CHILD_SOURCE);
-
-				const payload = JSON.stringify({
-					entryPoint: join(dir, "index.ts"),
-					outputPath: request.outputPath,
-					publicDir: request.assetDir ? resolve(request.assetDir) : null,
+			yield* writeFile(join(dir, "package.json"), PACKAGE_JSON_SOURCE);
+			yield* writeFile(join(dir, "tsconfig.json"), TSCONFIG_SOURCE);
+			yield* writeFile(join(dir, "Root.tsx"), ROOT_SOURCE);
+			yield* writeFile(join(dir, "index.ts"), INDEX_SOURCE);
+			yield* writeFile(
+				join(dir, "config.json"),
+				JSON.stringify({
+					dimensions: request.dimensions,
 					props: request.props ?? {},
-					codec: request.codec,
-					concurrency: request.concurrency,
-					crf: request.crf,
-					scale: request.scale,
-					frameRange: request.frameRange,
-					muted: request.muted,
-					frame: request.frame,
-					stillFormat: request.stillFormat,
-				});
+				}),
+			);
 
-				yield* Effect.sync(() =>
-					mkdirSync(dirname(request.outputPath), { recursive: true }),
+			yield* linkBrowserCache(dir);
+			// The flattened bundle's remaining bare specifiers *are* the external
+			// dependencies, which beats guessing them from the original source.
+			yield* install(dir, [
+				...new Set([...VIDEO_CORE_DEPS, ...bareImports(code)]),
+			]);
+
+			const childPath = join(dir, "render-video-child.mjs");
+			yield* writeFile(childPath, VIDEO_CHILD_SOURCE);
+			const fs = yield* FileSystem.FileSystem;
+			yield* fs
+				.makeDirectory(dirname(request.outputPath), { recursive: true })
+				.pipe(
+					Effect.mapError(
+						(cause) =>
+							new RenderError({
+								reason: `Could not create ${dirname(request.outputPath)}: ${cause.message}`,
+							}),
+					),
 				);
 
-				const result = yield* Effect.tryPromise({
-					try: async () => {
-						const proc = Bun.spawn(["bun", "run", childPath, payload], {
-							cwd: dir,
-							stdout: "pipe",
-							stderr: "inherit",
-						});
-						return await proc.exited;
-					},
-					catch: (cause) =>
-						new RenderError({ reason: `Could not run the renderer: ${cause}` }),
-				});
+			const payload = JSON.stringify({
+				entryPoint: join(dir, "index.ts"),
+				outputPath: request.outputPath,
+				publicDir: request.assetDir ? resolve(request.assetDir) : null,
+				props: request.props ?? {},
+				codec: request.codec,
+				concurrency: request.concurrency,
+				crf: request.crf,
+				scale: request.scale,
+				frameRange: request.frameRange,
+				muted: request.muted,
+				frame: request.frame,
+				stillFormat: request.stillFormat,
+			});
+			// stdout is discarded rather than piped: an unread pipe fills and blocks
+			// the child once Remotion has logged enough to it.
+			const result = yield* run("bun", ["run", childPath, payload], {
+				cwd: dir,
+				stdout: "ignore",
+				stderr: "inherit",
+			});
+			if (result.code !== 0) {
+				return yield* Effect.fail(
+					new RenderError({
+						reason: "Video render failed; see the output above.",
+					}),
+				);
+			}
+			return request.outputPath;
+		}, finish),
+	};
+};
 
-				if (result !== 0) {
-					return yield* Effect.fail(
-						new RenderError({
-							reason: "Video render failed; see the output above.",
-						}),
-					);
-				}
-				return request.outputPath;
-			}),
-		),
-});
-
-export const layer: Layer.Layer<Render> = Layer.sync(Render)(make);
+/** Built against the platform services, so its methods need nothing more. */
+export const layer: Layer.Layer<Render, never, Platform> = Layer.effect(Render)(
+	Effect.gen(function* () {
+		return make(yield* Effect.context<Platform>());
+	}),
+);

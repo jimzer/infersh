@@ -30,3 +30,10 @@ export const emitJson = (value: unknown): Effect.Effect<void> =>
  */
 export const wrapPayload = (payload: unknown, key: string): unknown =>
 	typeof payload === "string" ? { [key]: payload } : payload;
+
+/** Human-readable byte count for size warnings. */
+export const formatBytes = (bytes: number): string => {
+	if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	return `${bytes} B`;
+};
