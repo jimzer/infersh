@@ -210,6 +210,29 @@ export const layerMemory = (
 ): Layer.Layer<Secrets> =>
 	Layer.sync(Secrets)(() => make(memoryStore(seed), { readEnv: false }));
 
+/**
+ * A provider's key, read on first use and then remembered.
+ *
+ * Every layer is built for every command, so a provider that read its key
+ * while being built made `infer --version` pay for four keychain lookups —
+ * about 15 ms of a 70 ms start. A store that cannot be read counts as no key;
+ * the command that needs one then says so.
+ */
+export const lazyKey = (
+	provider: ProviderId,
+): Effect.Effect<Effect.Effect<Option.Option<string>>, never, Secrets> =>
+	Effect.gen(function* () {
+		const secrets = yield* Secrets;
+		return yield* Effect.cached(
+			secrets
+				.get(provider)
+				.pipe(
+					Effect.map(Option.map((resolved) => Redacted.value(resolved.key))),
+					Effect.orElseSucceed(Option.none),
+				),
+		);
+	});
+
 /** Renders a key for display: first and last 4 characters, rest masked. */
 export const mask = (key: Redacted.Redacted): string => {
 	const raw = Redacted.value(key);

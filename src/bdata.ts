@@ -13,11 +13,10 @@ import {
 	Effect,
 	Layer,
 	Option,
-	Redacted,
 	Schedule,
 } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import { MissingKeyError, Secrets } from "./secrets.ts";
+import { lazyKey, MissingKeyError, type Secrets } from "./secrets.ts";
 
 /** Every unlocker and SERP call goes through this one endpoint. */
 const REQUEST_URL = "https://api.brightdata.com/request";
@@ -289,17 +288,23 @@ export class Bdata extends Context.Service<Bdata, BdataShape>()("Bdata") {}
 
 const make = (options: {
 	readonly http: HttpClient.HttpClient;
-	readonly credentials: Option.Option<string>;
+	/** Looked up on first use; see `lazyKey`. */
+	readonly credentials: Effect.Effect<Option.Option<string>>;
 }): BdataShape => {
 	const { http, credentials } = options;
 
-	const requireCredentials = Option.isSome(credentials)
-		? Effect.succeed(credentials.value)
-		: Effect.fail(
-				new BdataError({
-					reason: new MissingKeyError({ provider: "brightdata" }).message,
-				}),
-			);
+	const requireCredentials = Effect.flatMap(
+		credentials,
+		Option.match({
+			onNone: () =>
+				Effect.fail(
+					new BdataError({
+						reason: new MissingKeyError({ provider: "brightdata" }).message,
+					}),
+				),
+			onSome: Effect.succeed,
+		}),
+	);
 
 	const call = (
 		body: Record<string, unknown>,
@@ -569,14 +574,11 @@ const make = (options: {
 export const layer: Layer.Layer<Bdata, never, Secrets | HttpClient.HttpClient> =
 	Layer.effect(Bdata)(
 		Effect.gen(function* () {
-			const secrets = yield* Secrets;
 			const http = yield* HttpClient.HttpClient;
-			const resolved = yield* secrets
-				.get("brightdata")
-				.pipe(Effect.orElseSucceed(Option.none));
+			const credentials = yield* lazyKey("brightdata");
 			return make({
 				http,
-				credentials: Option.map(resolved, (r) => Redacted.value(r.key)),
+				credentials,
 			});
 		}),
 	);

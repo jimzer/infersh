@@ -6,7 +6,7 @@
  * under the attachment limit without any loss in transcription quality.
  */
 
-import { unlinkSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import {
@@ -16,10 +16,10 @@ import {
 	Effect,
 	Layer,
 	Option,
-	Redacted,
+	type Scope,
 } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import { MissingKeyError, Secrets } from "./secrets.ts";
+import { lazyKey, MissingKeyError, type Secrets } from "./secrets.ts";
 
 const TRANSCRIPTIONS_URL =
 	"https://api.groq.com/openai/v1/audio/transcriptions";
@@ -143,57 +143,69 @@ export class Groq extends Context.Service<Groq, GroqShape>()("Groq") {}
 
 const make = (options: {
 	readonly http: HttpClient.HttpClient;
-	readonly credentials: Option.Option<string>;
+	/** Looked up on first use; see `lazyKey`. */
+	readonly credentials: Effect.Effect<Option.Option<string>>;
 }): GroqShape => {
 	const { http, credentials } = options;
 
-	const requireCredentials = Option.isSome(credentials)
-		? Effect.succeed(credentials.value)
-		: Effect.fail(
-				new GroqError({
-					reason: new MissingKeyError({ provider: "groq" }).message,
-				}),
-			);
+	const requireCredentials = Effect.flatMap(
+		credentials,
+		Option.match({
+			onNone: () =>
+				Effect.fail(
+					new GroqError({
+						reason: new MissingKeyError({ provider: "groq" }).message,
+					}),
+				),
+			onSome: Effect.succeed,
+		}),
+	);
 
 	/**
 	 * Downsamples to 16 kHz mono FLAC. A missing ffmpeg is a warning rather
 	 * than a failure: the original file may well be small enough already.
+	 *
+	 * The output is a scoped resource, removed when the transcription's scope
+	 * closes — on success, failure or interruption alike. It used to be removed
+	 * only after a successful upload, so an over-limit file or a network error
+	 * left a FLAC behind in the temp directory.
 	 */
-	const optimize = (input: string): Effect.Effect<string | null, GroqError> =>
+	const optimize = (
+		input: string,
+	): Effect.Effect<string | null, GroqError, Scope.Scope> =>
 		Effect.gen(function* () {
-			const output = join(
-				tmpdir(),
-				`infer-${process.pid}-${basename(input, extname(input))}.flac`,
-			);
-			const result = yield* Effect.tryPromise({
-				try: async () => {
-					const proc = Bun.spawn([...ffmpegArgs(input, output)], {
-						stdout: "ignore",
-						stderr: "pipe",
-					});
-					const stderr = await new Response(proc.stderr).text();
-					const code = await proc.exited;
-					return { code, stderr };
-				},
-				catch: () => new GroqError({ reason: "__ffmpeg_missing__" }),
-			}).pipe(
-				Effect.catch((error) =>
-					error.reason === "__ffmpeg_missing__"
-						? Effect.succeed(null)
-						: Effect.fail(error),
+			const output = yield* Effect.acquireRelease(
+				Effect.sync(() =>
+					join(
+						tmpdir(),
+						`infer-${process.pid}-${basename(input, extname(input))}.flac`,
+					),
 				),
+				(path) => Effect.sync(() => rmSync(path, { force: true })),
 			);
+			// None means ffmpeg could not be started at all, i.e. it is not installed.
+			const result = yield* Effect.tryPromise(async () => {
+				const proc = Bun.spawn([...ffmpegArgs(input, output)], {
+					stdout: "ignore",
+					stderr: "pipe",
+				});
+				const [stderr, code] = await Promise.all([
+					new Response(proc.stderr).text(),
+					proc.exited,
+				]);
+				return { code, stderr };
+			}).pipe(Effect.option);
 
-			if (result === null) {
+			if (Option.isNone(result)) {
 				yield* Console.error(
 					"ffmpeg not found — uploading the original file. Install ffmpeg, or pass --no-optimize to silence this.",
 				);
 				return null;
 			}
-			if (result.code !== 0) {
+			if (result.value.code !== 0) {
 				return yield* Effect.fail(
 					new GroqError({
-						reason: `ffmpeg failed to preprocess ${input}:\n${result.stderr.trim().split("\n").slice(-5).join("\n")}`,
+						reason: `ffmpeg failed to preprocess ${input}:\n${result.value.stderr.trim().split("\n").slice(-5).join("\n")}`,
 					}),
 				);
 			}
@@ -216,106 +228,93 @@ const make = (options: {
 
 	return {
 		transcribe: (opts) =>
-			Effect.gen(function* () {
-				const invalid = validate(opts);
-				if (invalid !== null) {
-					return yield* Effect.fail(new GroqError({ reason: invalid }));
-				}
-				const key = yield* requireCredentials;
+			Effect.scoped(
+				Effect.gen(function* () {
+					const invalid = validate(opts);
+					if (invalid !== null) {
+						return yield* Effect.fail(new GroqError({ reason: invalid }));
+					}
+					const key = yield* requireCredentials;
 
-				let temporary: string | null = null;
-				const form = new FormData();
+					const form = new FormData();
 
-				if (opts.url !== undefined && opts.url !== "") {
-					form.append("url", opts.url);
-				} else if (opts.file !== undefined) {
-					let source = opts.file;
-					if (opts.optimize) {
-						const optimized = yield* optimize(opts.file);
-						if (optimized !== null) {
-							temporary = optimized;
-							source = optimized;
+					if (opts.url !== undefined && opts.url !== "") {
+						form.append("url", opts.url);
+					} else if (opts.file !== undefined) {
+						let source = opts.file;
+						if (opts.optimize) {
+							source = (yield* optimize(opts.file)) ?? opts.file;
+						} else if (!isSupportedExtension(opts.file)) {
+							yield* Console.error(
+								`${extname(opts.file) || "This file"} is not a format Groq accepts; --no-optimize skipped the conversion that would have fixed it.`,
+							);
 						}
-					} else if (!isSupportedExtension(opts.file)) {
-						yield* Console.error(
-							`${extname(opts.file) || "This file"} is not a format Groq accepts; --no-optimize skipped the conversion that would have fixed it.`,
-						);
+
+						const upload = yield* readUpload(source);
+						if (exceedsAttachmentLimit(upload.size)) {
+							return yield* Effect.fail(
+								new GroqError({
+									reason: `${basename(source)} is ${formatBytes(upload.size)}, over the ${formatBytes(MAX_ATTACHMENT_BYTES)} direct-upload limit.\nHost it and pass --url instead, or split it into chunks.`,
+								}),
+							);
+						}
+						form.append("file", upload);
 					}
 
-					const upload = yield* readUpload(source);
-					if (exceedsAttachmentLimit(upload.size)) {
-						return yield* Effect.fail(
-							new GroqError({
-								reason: `${basename(source)} is ${formatBytes(upload.size)}, over the ${formatBytes(MAX_ATTACHMENT_BYTES)} direct-upload limit.\nHost it and pass --url instead, or split it into chunks.`,
-							}),
-						);
+					form.append("model", opts.model);
+					if (opts.language) form.append("language", opts.language);
+					if (opts.prompt) form.append("prompt", opts.prompt);
+					if (opts.responseFormat)
+						form.append("response_format", opts.responseFormat);
+					if (opts.temperature !== undefined)
+						form.append("temperature", String(opts.temperature));
+					for (const granularity of opts.granularities) {
+						form.append("timestamp_granularities[]", granularity);
 					}
-					form.append("file", upload);
-				}
 
-				form.append("model", opts.model);
-				if (opts.language) form.append("language", opts.language);
-				if (opts.prompt) form.append("prompt", opts.prompt);
-				if (opts.responseFormat)
-					form.append("response_format", opts.responseFormat);
-				if (opts.temperature !== undefined)
-					form.append("temperature", String(opts.temperature));
-				for (const granularity of opts.granularities) {
-					form.append("timestamp_granularities[]", granularity);
-				}
+					const response = yield* http
+						.execute(
+							HttpClientRequest.post(TRANSCRIPTIONS_URL, {
+								headers: { Authorization: `Bearer ${key}` },
+							}).pipe(HttpClientRequest.bodyFormData(form)),
+						)
+						.pipe(
+							Effect.mapError(
+								(cause) =>
+									new GroqError({ reason: `Transcription failed: ${cause}` }),
+							),
+						);
 
-				const response = yield* http
-					.execute(
-						HttpClientRequest.post(TRANSCRIPTIONS_URL, {
-							headers: { Authorization: `Bearer ${key}` },
-						}).pipe(HttpClientRequest.bodyFormData(form)),
-					)
-					.pipe(
+					const body = yield* response.text.pipe(
 						Effect.mapError(
 							(cause) =>
-								new GroqError({ reason: `Transcription failed: ${cause}` }),
+								new GroqError({
+									reason: `Could not read the response: ${cause}`,
+								}),
 						),
 					);
 
-				const body = yield* response.text.pipe(
-					Effect.mapError(
-						(cause) =>
+					if (response.status >= 400) {
+						return yield* Effect.fail(
 							new GroqError({
-								reason: `Could not read the response: ${cause}`,
+								reason: `Transcription failed (${response.status}): ${body}`,
 							}),
-					),
-				);
-
-				// Clean up before returning, but never let cleanup mask a result.
-				if (temporary !== null) {
-					try {
-						unlinkSync(temporary);
-					} catch {}
-				}
-
-				if (response.status >= 400) {
-					return yield* Effect.fail(
-						new GroqError({
-							reason: `Transcription failed (${response.status}): ${body}`,
-						}),
-					);
-				}
-				return body;
-			}),
+						);
+					}
+					return body;
+				}),
+			),
 	};
 };
 
 export const layer: Layer.Layer<Groq, never, Secrets | HttpClient.HttpClient> =
 	Layer.effect(Groq)(
 		Effect.gen(function* () {
-			const secrets = yield* Secrets;
 			const http = yield* HttpClient.HttpClient;
-			const resolved = yield* secrets
-				.get("groq")
-				.pipe(Effect.orElseSucceed(Option.none));
+			const credentials = yield* lazyKey("groq");
 			return make({
 				http,
-				credentials: Option.map(resolved, (r) => Redacted.value(r.key)),
+				credentials,
 			});
 		}),
 	);

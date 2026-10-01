@@ -12,9 +12,9 @@
  * one self-contained prompt.
  */
 
-import { Context, Data, Effect, Layer, Option, Redacted } from "effect";
+import { Context, Data, Effect, Layer, Option } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import { MissingKeyError, Secrets } from "./secrets.ts";
+import { lazyKey, MissingKeyError, type Secrets } from "./secrets.ts";
 
 const RESPONSES_URL = "https://openrouter.ai/api/v1/responses";
 const MODELS_URL = "https://openrouter.ai/api/v1/models";
@@ -410,17 +410,23 @@ export class OpenRouter extends Context.Service<OpenRouter, OpenRouterShape>()(
 
 const make = (options: {
 	readonly http: HttpClient.HttpClient;
-	readonly credentials: Option.Option<string>;
+	/** Looked up on first use; see `lazyKey`. */
+	readonly credentials: Effect.Effect<Option.Option<string>>;
 }): OpenRouterShape => {
 	const { http, credentials } = options;
 
-	const requireCredentials = Option.isSome(credentials)
-		? Effect.succeed(credentials.value)
-		: Effect.fail(
-				new OpenRouterError({
-					reason: new MissingKeyError({ provider: "openrouter" }).message,
-				}),
-			);
+	const requireCredentials = Effect.flatMap(
+		credentials,
+		Option.match({
+			onNone: () =>
+				Effect.fail(
+					new OpenRouterError({
+						reason: new MissingKeyError({ provider: "openrouter" }).message,
+					}),
+				),
+			onSome: Effect.succeed,
+		}),
+	);
 
 	/** GETs a public catalogue URL; a key is sent only if one happens to exist. */
 	const getJson = (url: string): Effect.Effect<unknown, OpenRouterError> =>
@@ -429,9 +435,8 @@ const make = (options: {
 				"HTTP-Referer": "https://github.com/jimzer/infersh",
 				"X-Title": "infer",
 			};
-			if (Option.isSome(credentials)) {
-				headers.Authorization = `Bearer ${credentials.value}`;
-			}
+			const key = yield* credentials;
+			if (Option.isSome(key)) headers.Authorization = `Bearer ${key.value}`;
 			const response = yield* http
 				.get(url, { headers })
 				.pipe(
@@ -573,14 +578,11 @@ export const layer: Layer.Layer<
 	Secrets | HttpClient.HttpClient
 > = Layer.effect(OpenRouter)(
 	Effect.gen(function* () {
-		const secrets = yield* Secrets;
 		const http = yield* HttpClient.HttpClient;
-		const resolved = yield* secrets
-			.get("openrouter")
-			.pipe(Effect.orElseSucceed(Option.none));
+		const credentials = yield* lazyKey("openrouter");
 		return make({
 			http,
-			credentials: Option.map(resolved, (r) => Redacted.value(r.key)),
+			credentials,
 		});
 	}),
 );

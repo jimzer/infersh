@@ -10,17 +10,9 @@ import { mkdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createFalClient, type FalClient } from "@fal-ai/client";
 import { dereference } from "@readme/openapi-parser";
-import {
-	Console,
-	Context,
-	Data,
-	Effect,
-	Layer,
-	Option,
-	Redacted,
-} from "effect";
+import { Console, Context, Data, Effect, Layer, Option } from "effect";
 import { HttpClient } from "effect/http";
-import { MissingKeyError, Secrets } from "./secrets.ts";
+import { lazyKey, MissingKeyError, type Secrets } from "./secrets.ts";
 
 const PLATFORM_API = "https://api.fal.ai/v1";
 const SPEC_URL = "https://fal.ai/api/openapi/queue/openapi.json";
@@ -299,24 +291,35 @@ export interface FalShape {
 export class Fal extends Context.Service<Fal, FalShape>()("Fal") {}
 
 const make = (options: {
-	readonly client: FalClient;
 	readonly http: HttpClient.HttpClient;
-	readonly credentials: Option.Option<string>;
+	/** Looked up on first use; see `lazyKey`. */
+	readonly credentials: Effect.Effect<Option.Option<string>>;
 }): FalShape => {
-	const { client, http, credentials } = options;
+	const { http, credentials } = options;
 
 	/** Anything that spends money or writes to the CDN needs a real key. */
-	const requireCredentials = Option.isSome(credentials)
-		? Effect.succeed(credentials.value)
-		: Effect.fail(
-				new FalError({
-					reason: new MissingKeyError({ provider: "fal" }).message,
-				}),
-			);
+	const requireCredentials = Effect.flatMap(
+		credentials,
+		Option.match({
+			onNone: () =>
+				Effect.fail(
+					new FalError({
+						reason: new MissingKeyError({ provider: "fal" }).message,
+					}),
+				),
+			onSome: Effect.succeed,
+		}),
+	);
+
+	/** A client carrying the key, for the calls that spend money or upload. */
+	const requireClient: Effect.Effect<FalClient, FalError> = Effect.map(
+		requireCredentials,
+		(key) => createFalClient({ credentials: key }),
+	);
 
 	const upload: FalShape["upload"] = (path) =>
 		Effect.gen(function* () {
-			yield* requireCredentials;
+			const client = yield* requireClient;
 			return yield* Effect.tryPromise({
 				try: async () => {
 					const file = Bun.file(path);
@@ -401,9 +404,10 @@ const make = (options: {
 						headers: {
 							Accept: "application/json",
 							// Optional: search works anonymously, just rate limited.
-							...(Option.isSome(credentials)
-								? { Authorization: `Key ${credentials.value}` }
-								: {}),
+							...Option.match(yield* credentials, {
+								onNone: () => ({}),
+								onSome: (key) => ({ Authorization: `Key ${key}` }),
+							}),
 						},
 					})
 					.pipe(
@@ -448,7 +452,7 @@ const make = (options: {
 
 		run: (endpointId, input) =>
 			Effect.gen(function* () {
-				yield* requireCredentials;
+				const client = yield* requireClient;
 				const result = yield* Effect.tryPromise({
 					try: () =>
 						client.subscribe(endpointId, {
@@ -505,24 +509,17 @@ const make = (options: {
 };
 
 /**
- * Builds a fal client bound to the stored key.
+ * The fal service. Its key is read only when a command first needs one.
  *
- * `createFalClient` is used rather than the module-level `fal` singleton so
- * credentials live in the layer instead of in mutable global state, which also
- * keeps two differently-configured clients from interfering.
+ * Clients come from `createFalClient` rather than the module-level `fal`
+ * singleton, so the key is passed in instead of living in mutable global
+ * state, and two differently-configured clients cannot interfere.
  */
 export const layer: Layer.Layer<Fal, never, Secrets | HttpClient.HttpClient> =
 	Layer.effect(Fal)(
 		Effect.gen(function* () {
-			const secrets = yield* Secrets;
 			const http = yield* HttpClient.HttpClient;
-			const resolved = yield* secrets
-				.get("fal")
-				.pipe(Effect.orElseSucceed(Option.none));
-			const credentials = Option.map(resolved, (r) => Redacted.value(r.key));
-			const client = createFalClient({
-				credentials: () => Option.getOrUndefined(credentials),
-			});
-			return make({ client, http, credentials });
+			const credentials = yield* lazyKey("fal");
+			return make({ http, credentials });
 		}),
 	);
