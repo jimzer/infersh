@@ -45,14 +45,14 @@ export const updateCmd = Command.make(
 	(config) =>
 		Effect.gen(function* () {
 			const { version: latest, assetUrl } = yield* latestRelease();
-			const outdatedNow = isDev() || isNewer(latest, VERSION);
+			const outdated = isDev() || isNewer(latest, VERSION);
 
 			// A single JSON value, so --json --check is a clean machine query.
-			if (config.json && (config.check || !outdatedNow) && !config.force) {
+			if (config.json && (config.check || !outdated) && !config.force) {
 				return yield* emitJson({
 					installed: VERSION,
 					latest,
-					outdated: outdatedNow,
+					outdated,
 					updated: false,
 					dev: isDev(),
 				});
@@ -67,7 +67,6 @@ export const updateCmd = Command.make(
 				yield* Console.log(`Installed v${VERSION}, latest v${latest}.`);
 			}
 
-			const outdated = isDev() || isNewer(latest, VERSION);
 			if (!outdated && !config.force) {
 				yield* Console.log("Already up to date.");
 				return;

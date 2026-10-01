@@ -7,6 +7,7 @@
  * bare, so an agent never has to know which commands emit what shape.
  */
 
+import { format } from "node:util";
 import { Console, type Effect } from "effect";
 import { Flag } from "effect/cli";
 
@@ -37,3 +38,21 @@ export const formatBytes = (bytes: number): string => {
 	if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
 	return `${bytes} B`;
 };
+
+/**
+ * The CLI's console: stderr written without colour.
+ *
+ * stderr carries progress and notices — "Rendering image...", the update
+ * notice, `ui`'s URL — as well as errors, and Bun paints every
+ * `console.error` red on a terminal, so all of it read as a failure. Provided
+ * once in `main.ts` in place of `globalThis.console`; stdout is untouched.
+ */
+export const plainConsole: Console.Console = Object.assign(
+	Object.create(console),
+	{
+		error: (...args: ReadonlyArray<unknown>) =>
+			void process.stderr.write(`${format(...args)}\n`),
+		warn: (...args: ReadonlyArray<unknown>) =>
+			void process.stderr.write(`${format(...args)}\n`),
+	},
+);

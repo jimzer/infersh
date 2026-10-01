@@ -123,8 +123,10 @@ const missingBrowser = (error: unknown): boolean =>
  * it is slow is the useful part.
  */
 const installShell = async (): Promise<boolean> => {
-	console.error(
-		"Downloading Chrome headless shell, once — about 200 MB, so this takes a minute...",
+	// Written directly: Bun prints console.error in red, and this is news, not
+	// a failure.
+	process.stderr.write(
+		"Downloading Chrome headless shell, once — about 200 MB, so this takes a minute...\n",
 	);
 	const proc = Bun.spawn(
 		[
@@ -147,8 +149,8 @@ const installShell = async (): Promise<boolean> => {
 			stderr.split("\n").find((line) => line.startsWith("Error")) ??
 			stderr.trim().split("\n").at(-1) ??
 			"unknown error";
-		console.error(
-			`Could not download it (${reason.trim()}); falling back to an installed Chrome.`,
+		process.stderr.write(
+			`Could not download it (${reason.trim()}); falling back to an installed Chrome.\n`,
 		);
 	}
 	return code === 0;

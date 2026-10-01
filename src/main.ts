@@ -4,7 +4,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Console, Effect, Layer } from "effect";
 import { Command } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
-import { runUpdateCheck } from "./autoupdate.ts";
+import { updateCheck } from "./autoupdate.ts";
 import * as Bdata from "./bdata.ts";
 import * as Budget from "./budget.ts";
 import { bdataCmd } from "./commands/bdata.ts";
@@ -20,6 +20,7 @@ import { updateCmd } from "./commands/update.ts";
 import * as Fal from "./fal.ts";
 import * as Groq from "./groq.ts";
 import * as OpenRouter from "./openrouter.ts";
+import { plainConsole } from "./output.ts";
 import * as Render from "./render.ts";
 import * as Secrets from "./secrets.ts";
 import * as Skills from "./skills.ts";
@@ -75,12 +76,12 @@ const exitCode = await Command.runWith(inferCmd, { version: VERSION })(
 ).pipe(
 	Effect.as(0),
 	Effect.catch((error) => Console.error(error.message).pipe(Effect.as(1))),
+	// After the command, never before: this way the check cannot delay output,
+	// and an auto-install cannot swap the binary while it is still running.
+	Effect.tap(() => updateCheck),
 	Effect.provide(appLayer),
+	Effect.provideService(Console.Console, plainConsole),
 	Effect.runPromise,
 );
-
-// After the command, never before: this way the check cannot delay output,
-// and an auto-install cannot swap the binary while it is still running.
-await runUpdateCheck();
 
 process.exit(exitCode);

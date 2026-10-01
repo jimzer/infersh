@@ -6,10 +6,10 @@
  * installs only when explicitly opted in. See `docs/adrs/0007`.
  */
 
-import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { Effect } from "effect";
+import { join } from "node:path";
+import { Clock, Console, Effect, type FileSystem, Option } from "effect";
+import type { HttpClient } from "effect/http";
+import { cacheDir, readFile, writeFile } from "./stage.ts";
 import {
 	installPath,
 	isSourceCheckout,
@@ -22,7 +22,7 @@ import { isDev, isNewer, VERSION } from "./version.ts";
 export const TTL_MS = 24 * 60 * 60 * 1000;
 
 /** The check must never noticeably delay the CLI, even on a bad network. */
-const TIMEOUT_MS = 1500;
+const TIMEOUT = "1500 millis";
 
 export type Mode = "off" | "notify" | "auto";
 
@@ -66,12 +66,7 @@ export interface CacheEntry {
 
 export const cachePath = (
 	env: Record<string, string | undefined> = process.env,
-): string =>
-	join(
-		env.XDG_CACHE_HOME || join(homedir(), ".cache"),
-		"infer",
-		"update-check.json",
-	);
+): string => join(cacheDir(env), "update-check.json");
 
 /** Any cache problem is ignored — a broken cache must not break the CLI. */
 export const parseCache = (raw: string): CacheEntry | null => {
@@ -85,66 +80,60 @@ export const parseCache = (raw: string): CacheEntry | null => {
 	}
 };
 
-const readCache = async (path: string): Promise<CacheEntry | null> => {
-	try {
-		const file = Bun.file(path);
-		if (!(await file.exists())) return null;
-		return parseCache(await file.text());
-	} catch {
-		return null;
-	}
-};
+const readCache = (
+	path: string,
+): Effect.Effect<CacheEntry | null, never, FileSystem.FileSystem> =>
+	readFile(path).pipe(
+		Effect.map(parseCache),
+		Effect.orElseSucceed(() => null),
+	);
 
-const writeCache = async (path: string, entry: CacheEntry): Promise<void> => {
-	try {
-		mkdirSync(dirname(path), { recursive: true });
-		await Bun.write(path, JSON.stringify(entry));
-	} catch {
-		// A read-only or full home directory is not the CLI's problem.
-	}
-};
+/** A read-only or full home directory is not the CLI's problem. */
+const writeCache = (
+	path: string,
+	entry: CacheEntry,
+): Effect.Effect<void, never, FileSystem.FileSystem> =>
+	writeFile(path, JSON.stringify(entry)).pipe(Effect.ignore);
+
+type Services = HttpClient.HttpClient | FileSystem.FileSystem;
 
 /**
  * Resolves the latest known version, using the cache when it is fresh so the
  * common invocation performs no network I/O at all.
  */
-const knownLatest = async (
+const knownLatest = (
 	path: string,
 	now: number,
-): Promise<string | null> => {
-	const cached = await readCache(path);
-	if (cached && !isStale(cached.checkedAt, now)) return cached.latest;
+): Effect.Effect<string | null, never, Services> =>
+	Effect.gen(function* () {
+		const cached = yield* readCache(path);
+		if (cached && !isStale(cached.checkedAt, now)) return cached.latest;
 
-	const release = await Effect.runPromise(
-		latestRelease(TIMEOUT_MS).pipe(Effect.option),
-	);
-	if (release._tag === "None") {
+		const release = yield* latestRelease(TIMEOUT).pipe(Effect.option);
 		// Offline or rate-limited: fall back to whatever we last knew.
-		return cached?.latest ?? null;
-	}
-	await writeCache(path, { checkedAt: now, latest: release.value.version });
-	return release.value.version;
-};
+		if (Option.isNone(release)) return cached?.latest ?? null;
+		yield* writeCache(path, { checkedAt: now, latest: release.value.version });
+		return release.value.version;
+	});
 
-const installLatest = async (): Promise<string | null> => {
-	const result = await Effect.runPromise(
-		Effect.gen(function* () {
-			const target = yield* installPath;
-			if (isSourceCheckout(target)) return null;
-			const release = yield* latestRelease(TIMEOUT_MS);
-			yield* replaceBinary(target, release.assetUrl);
-			return release.version;
-		}).pipe(Effect.option),
-	);
-	return result._tag === "Some" ? result.value : null;
-};
+const installLatest: Effect.Effect<string | null, never, Services> = Effect.gen(
+	function* () {
+		const target = yield* installPath;
+		if (isSourceCheckout(target)) return null;
+		const release = yield* latestRelease(TIMEOUT);
+		yield* replaceBinary(target, release.assetUrl);
+		return release.version;
+	},
+).pipe(Effect.orElseSucceed(() => null));
 
 /**
- * Runs the startup check. Never throws and never returns a failure — an
- * update check must not be able to break the command the user actually ran.
+ * The startup check, run by `main.ts` after the command has finished.
+ *
+ * It cannot fail: every cause, defects included, is swallowed — an update
+ * check must never be able to break the command the user actually ran.
  */
-export const runUpdateCheck = async (): Promise<void> => {
-	try {
+export const updateCheck: Effect.Effect<void, never, Services> = Effect.gen(
+	function* () {
 		const mode = modeFor({
 			version: VERSION,
 			env: process.env,
@@ -152,21 +141,20 @@ export const runUpdateCheck = async (): Promise<void> => {
 		});
 		if (mode === "off") return;
 
-		const latest = await knownLatest(cachePath(), Date.now());
+		const now = yield* Clock.currentTimeMillis;
+		const latest = yield* knownLatest(cachePath(), now);
 		if (latest === null || !isNewer(latest, VERSION)) return;
 
 		if (mode === "notify") {
-			process.stderr.write(
-				`\ninfer v${latest} is available (you have v${VERSION}) — run \`infer update\`\n`,
+			yield* Console.error(
+				`\ninfer v${latest} is available (you have v${VERSION}) — run \`infer update\``,
 			);
 			return;
 		}
 
-		const installed = await installLatest();
+		const installed = yield* installLatest;
 		if (installed !== null) {
-			process.stderr.write(`\ninfer updated to v${installed}\n`);
+			yield* Console.error(`\ninfer updated to v${installed}`);
 		}
-	} catch {
-		// Deliberately silent.
-	}
-};
+	},
+).pipe(Effect.catchCause(() => Effect.void));

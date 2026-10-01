@@ -3,9 +3,10 @@
  * update check. See `docs/adrs/0004` and `docs/adrs/0005`.
  */
 
-import { chmodSync, realpathSync, renameSync, unlinkSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { Data, Effect } from "effect";
+import { Data, type Duration, Effect, FileSystem } from "effect";
+import { HttpClient } from "effect/http";
 import {
 	ASSET_NAME,
 	LATEST_RELEASE_API,
@@ -27,6 +28,41 @@ export interface Release {
 	readonly assetUrl: string;
 }
 
+/** GitHub rejects API requests without a User-Agent. */
+const HEADERS = {
+	Accept: "application/vnd.github+json",
+	"User-Agent": `infer/${VERSION}`,
+};
+
+const fail = (reason: string) => new UpdateError({ reason });
+
+/** Reads a release body defensively: GitHub's shape is not ours to trust. */
+export const parseRelease = (body: unknown): Release | string => {
+	const value = (typeof body === "object" && body !== null ? body : {}) as {
+		tag_name?: unknown;
+		assets?: unknown;
+	};
+	if (typeof value.tag_name !== "string" || value.tag_name === "") {
+		return `No published release found for ${REPO}.`;
+	}
+	const assets = Array.isArray(value.assets) ? value.assets : [];
+	const asset = assets.find(
+		(a): a is { browser_download_url: string } =>
+			typeof a === "object" &&
+			a !== null &&
+			(a as { name?: unknown }).name === ASSET_NAME &&
+			typeof (a as { browser_download_url?: unknown }).browser_download_url ===
+				"string",
+	);
+	if (asset === undefined) {
+		return `Release ${value.tag_name} has no ${ASSET_NAME} asset attached.`;
+	}
+	return {
+		version: normalize(value.tag_name),
+		assetUrl: asset.browser_download_url,
+	};
+};
+
 /**
  * The most recent published release, with the exact asset URL for its tag.
  *
@@ -36,52 +72,27 @@ export interface Release {
  * build.
  */
 export const latestRelease = (
-	timeoutMs?: number,
-): Effect.Effect<Release, UpdateError> =>
+	timeout?: Duration.Input,
+): Effect.Effect<Release, UpdateError, HttpClient.HttpClient> =>
 	Effect.gen(function* () {
-		const body = yield* Effect.tryPromise({
-			try: async () => {
-				const res = await fetch(LATEST_RELEASE_API, {
-					headers: {
-						Accept: "application/vnd.github+json",
-						// GitHub rejects API requests without a User-Agent.
-						"User-Agent": `infer/${VERSION}`,
-					},
-					...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
-				});
-				if (!res.ok) {
-					throw new Error(`GitHub returned ${res.status} ${res.statusText}`);
-				}
-				return (await res.json()) as {
-					tag_name?: string;
-					assets?: ReadonlyArray<{
-						name?: string;
-						browser_download_url?: string;
-					}>;
-				};
-			},
-			catch: (cause) =>
-				new UpdateError({ reason: `Could not check for updates: ${cause}` }),
-		});
-
-		if (!body.tag_name) {
+		const http = yield* HttpClient.HttpClient;
+		const response = yield* http.get(LATEST_RELEASE_API, { headers: HEADERS });
+		if (response.status >= 400) {
 			return yield* Effect.fail(
-				new UpdateError({ reason: `No published release found for ${REPO}.` }),
+				fail(`Could not check for updates: GitHub returned ${response.status}`),
 			);
 		}
-		const asset = body.assets?.find((a) => a.name === ASSET_NAME);
-		if (!asset?.browser_download_url) {
-			return yield* Effect.fail(
-				new UpdateError({
-					reason: `Release ${body.tag_name} has no ${ASSET_NAME} asset attached.`,
-				}),
-			);
-		}
-		return {
-			version: normalize(body.tag_name),
-			assetUrl: asset.browser_download_url,
-		};
-	});
+		const release = parseRelease(yield* response.json);
+		if (typeof release === "string") return yield* Effect.fail(fail(release));
+		return release;
+	}).pipe(
+		timeout === undefined ? (effect) => effect : Effect.timeout(timeout),
+		Effect.mapError((error) =>
+			error._tag === "UpdateError"
+				? error
+				: fail(`Could not check for updates: ${error.message}`),
+		),
+	);
 
 /**
  * The file to overwrite. Symlinks are resolved so that updating through a
@@ -89,10 +100,7 @@ export const latestRelease = (
  */
 export const installPath: Effect.Effect<string, UpdateError> = Effect.try({
 	try: () => realpathSync(Bun.main),
-	catch: (cause) =>
-		new UpdateError({
-			reason: `Could not locate the running binary: ${cause}`,
-		}),
+	catch: (cause) => fail(`Could not locate the running binary: ${cause}`),
 });
 
 /** A checkout runs from `.ts` sources and must never be overwritten. */
@@ -104,36 +112,47 @@ export const isSourceCheckout = (target: string): boolean =>
  *
  * The temp file is written to the *same directory* as the target so the
  * rename is atomic; replacing a running script is safe because the kernel
- * keeps the current process on the old inode.
+ * keeps the current process on the old inode. If anything fails the temp file
+ * is removed, so a partial download never lingers in the user's bin directory.
  */
 export const replaceBinary = (
 	target: string,
 	assetUrl: string,
-): Effect.Effect<void, UpdateError> =>
+): Effect.Effect<
+	void,
+	UpdateError,
+	HttpClient.HttpClient | FileSystem.FileSystem
+> =>
 	Effect.gen(function* () {
+		const http = yield* HttpClient.HttpClient;
+		const fs = yield* FileSystem.FileSystem;
 		const temp = join(dirname(target), `.infer.update.${process.pid}`);
-		yield* Effect.tryPromise({
-			try: async () => {
-				const res = await fetch(assetUrl, {
-					headers: { "User-Agent": `infer/${VERSION}` },
-				});
-				if (!res.ok) {
-					throw new Error(`download failed: ${res.status} ${res.statusText}`);
-				}
-				const bytes = await res.bytes();
-				if (bytes.length === 0) throw new Error("downloaded an empty file");
-				await Bun.write(temp, bytes);
-				chmodSync(temp, 0o755);
-				renameSync(temp, target);
-			},
-			catch: (cause) => {
-				// Never leave a partial file behind in the user's bin directory.
-				try {
-					unlinkSync(temp);
-				} catch {}
-				return new UpdateError({
-					reason: `Could not install the update: ${cause}\nIs ${target} writable?`,
-				});
-			},
+
+		const response = yield* http.get(assetUrl, {
+			headers: { "User-Agent": HEADERS["User-Agent"] },
 		});
-	});
+		if (response.status >= 400) {
+			return yield* Effect.fail(
+				fail(`download failed: GitHub returned ${response.status}`),
+			);
+		}
+		const bytes = new Uint8Array(yield* response.arrayBuffer);
+		if (bytes.length === 0) {
+			return yield* Effect.fail(fail("downloaded an empty file"));
+		}
+		yield* Effect.gen(function* () {
+			yield* fs.writeFile(temp, bytes);
+			yield* fs.chmod(temp, 0o755);
+			yield* fs.rename(temp, target);
+		}).pipe(Effect.onError(() => fs.remove(temp).pipe(Effect.ignore)));
+	}).pipe(
+		Effect.mapError((error) =>
+			error._tag === "UpdateError"
+				? new UpdateError({
+						reason: `Could not install the update: ${error.reason}`,
+					})
+				: new UpdateError({
+						reason: `Could not install the update: ${error.message}\nIs ${target} writable?`,
+					}),
+		),
+	);
