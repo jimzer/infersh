@@ -31,6 +31,7 @@ import {
 	VIDEO_CHILD_SOURCE,
 	VIDEO_CORE_DEPS,
 } from "./render-video-source.ts";
+import { TAILWIND_PACKAGE } from "./tailwind.ts";
 
 export { CODECS };
 
@@ -268,7 +269,7 @@ const runChild = (
 				outputPath: request.outputPath,
 				assetDir: request.assetDir,
 				head: request.head,
-				tailwind: request.tailwind,
+				tailwindPackage: request.tailwind ? TAILWIND_PACKAGE : undefined,
 				waitUntil: request.waitUntil,
 			});
 

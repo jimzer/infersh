@@ -20,11 +20,18 @@ export const formatFromPath = (path: string): ImageFormat => {
 	return "png";
 };
 
-/** Wraps rendered markup in a document, pointing assets at the intercepted origin. */
+/**
+ * Wraps rendered markup in a document, pointing assets at the intercepted origin.
+ *
+ * `tailwindScript` is Tailwind's browser build, inlined so a render needs no
+ * network. The `</script` rewrite mirrors `inlineScript` in `tailwind.ts`,
+ * which this file cannot import: it is embedded as text and must stay
+ * dependency-free.
+ */
 export const buildHtml = (options: {
 	readonly markup: string;
 	readonly head?: string;
-	readonly tailwind: boolean;
+	readonly tailwindScript?: string;
 	readonly transparent: boolean;
 }): string => {
 	const parts = [
@@ -33,8 +40,10 @@ export const buildHtml = (options: {
 		// composition, so it is always reset.
 		"<style>html,body{margin:0;padding:0}</style>",
 	];
-	if (options.tailwind) {
-		parts.push('<script src="https://cdn.tailwindcss.com"></script>');
+	if (options.tailwindScript !== undefined) {
+		parts.push(
+			`<script>${options.tailwindScript.replace(/<\/(script)/gi, "<\\/$1")}</script>`,
+		);
 	}
 	if (options.transparent) {
 		parts.push("<style>html,body{background:transparent !important}</style>");

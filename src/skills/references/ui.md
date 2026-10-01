@@ -68,7 +68,10 @@ function Pick() {
 createRoot(document.getElementById("root")!).render(<Pick />);
 ```
 
-Tailwind is injected by default, so class names work with nothing to set up.
+Tailwind v4 is inlined by default, so class names work with nothing to set up
+and no network. If you know Tailwind from v3: `bg-opacity-*` is gone (use
+`bg-black/50`), and a bare `border` takes the text colour rather than grey.
+[render.md](render.md) has the full list.
 `react` and anything else you import are installed on demand — the file does
 not need a project around it, and relative imports of your own files are
 inlined.

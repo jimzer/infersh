@@ -26,7 +26,7 @@ describe("formatFromPath", () => {
 });
 
 describe("buildHtml", () => {
-	const base = { markup: "<h1>hi</h1>", tailwind: false, transparent: false };
+	const base = { markup: "<h1>hi</h1>", transparent: false };
 
 	test("points relative asset URLs at the intercepted origin", () => {
 		expect(buildHtml(base)).toContain(`<base href="${ASSET_ORIGIN}/">`);
@@ -43,11 +43,17 @@ describe("buildHtml", () => {
 		expect(html).toContain('<meta charset="utf-8">');
 	});
 
-	test("injects Tailwind only when asked", () => {
-		expect(buildHtml(base)).not.toContain("tailwindcss");
-		expect(buildHtml({ ...base, tailwind: true })).toContain(
-			"https://cdn.tailwindcss.com",
-		);
+	test("inlines Tailwind only when given, and never from a CDN", () => {
+		expect(buildHtml(base)).not.toContain("<script");
+		const html = buildHtml({ ...base, tailwindScript: "var tw=1;" });
+		expect(html).toContain("<script>var tw=1;</script>");
+		expect(html).not.toContain("src=");
+	});
+
+	test("cannot have its Tailwind script element closed early", () => {
+		const html = buildHtml({ ...base, tailwindScript: 'x="</script>";' });
+		expect(html).toContain('x="<\\/script>";');
+		expect(html.match(/<\/script>/g)?.length).toBe(1);
 	});
 
 	test("makes the background transparent only when asked", () => {

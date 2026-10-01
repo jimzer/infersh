@@ -80,7 +80,7 @@ const sharedFlags = {
 	noTailwind: Flag.Boolean("no-tailwind").pipe(
 		Flag.withDefault(false),
 		Flag.withDescription(
-			"Skip the Tailwind CDN script. Tailwind is injected by default, so a page can be styled with class names alone.",
+			"Skip Tailwind. Tailwind v4 is inlined by default, so a page can be styled with class names alone and needs no network.",
 		),
 	),
 	head: Flag.String("head").pipe(

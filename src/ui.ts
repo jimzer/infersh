@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Console, Context, Data, Effect, Layer } from "effect";
 import { bareImports } from "./render.ts";
+import { inlineScript, TAILWIND_NAME, TAILWIND_PACKAGE } from "./tailwind.ts";
 // Embedded as text: the bundler copies the characters and never follows the
 // import of `./index.html` inside, which only exists in the staged temp
 // directory. This file must therefore never be imported normally.
@@ -217,7 +218,8 @@ export const buildPage = (options: {
 	readonly mode: "ask" | "present";
 	readonly title: string;
 	readonly data: unknown;
-	readonly tailwind: boolean;
+	/** Tailwind's browser build, inlined so the page needs no network. */
+	readonly tailwindScript?: string;
 	readonly head?: string;
 }): string => {
 	const dataJson =
@@ -228,10 +230,10 @@ export const buildPage = (options: {
 		`<title>${options.title.replace(/[<&]/g, "")}</title>`,
 		`<style>${BASE_CSS}</style>`,
 	];
-	// Same CDN script `render` injects, so a page can be styled with class
-	// names and nothing else. Needs network; `--no-tailwind` skips it.
-	if (options.tailwind) {
-		head.push('<script src="https://cdn.tailwindcss.com"></script>');
+	// The same build `render` inlines, so a page can be styled with class names
+	// and nothing else. `--no-tailwind` skips it.
+	if (options.tailwindScript !== undefined) {
+		head.push(inlineScript(options.tailwindScript));
 	}
 	if (options.head) head.push(options.head);
 
@@ -370,6 +372,19 @@ const installDeps = (
 		}
 	});
 
+/**
+ * Reads the Tailwind browser build installed into the staged directory.
+ *
+ * It is inlined into the page rather than linked, so every renderer embeds
+ * Tailwind the same way and a page never fetches it. See `docs/adrs/0020`.
+ */
+const readTailwind = (dir: string): Effect.Effect<string, UiError> =>
+	Effect.tryPromise({
+		try: async () => Bun.file(Bun.resolveSync(TAILWIND_NAME, dir)).text(),
+		catch: (cause) =>
+			new UiError({ reason: `Could not load Tailwind: ${cause}` }),
+	});
+
 const withTempDir = <A, E>(
 	use: (dir: string) => Effect.Effect<A, E>,
 ): Effect.Effect<A, E | UiError> =>
@@ -499,7 +514,13 @@ const make = (): UiShape => ({
 			Effect.gen(function* () {
 				const token = newToken();
 				const deps = yield* flattenApp(request.appPath, dir);
-				yield* installDeps(dir, deps);
+				yield* installDeps(
+					dir,
+					request.tailwind ? [...deps, TAILWIND_PACKAGE] : deps,
+				);
+				const tailwindScript = request.tailwind
+					? yield* readTailwind(dir)
+					: undefined;
 				yield* write(
 					join(dir, "index.html"),
 					buildPage({
@@ -507,7 +528,7 @@ const make = (): UiShape => ({
 						mode: request.mode,
 						title: request.title,
 						data: request.data,
-						tailwind: request.tailwind,
+						tailwindScript,
 						head: request.head,
 					}),
 				);

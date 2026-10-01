@@ -24,6 +24,7 @@ time to discover and would otherwise be rediscovered the hard way.
 | [17](0017-social-datasets-the-docs-are-wrong.md) | The social dataset docs are wrong in three places |
 | [18](0018-keep-playwright-for-now-over-bun-webview.md) | Keep Playwright for now, over Bun.WebView |
 | [19](0019-effect-v4-stable.md) | Effect v4 stable — the renames, and the one that typechecks |
+| [20](0020-tailwind-v4-inlined.md) | Tailwind v4, inlined into every page — and why not the CDN or a build step |
 
 ## Writing one
 

@@ -21,7 +21,8 @@ interface Job {
 	readonly outputPath: string;
 	readonly assetDir?: string;
 	readonly head?: string;
-	readonly tailwind: boolean;
+	/** `name@version` of Tailwind's browser build, or absent for none. */
+	readonly tailwindPackage?: string;
 	readonly waitUntil: string;
 	readonly transparent?: boolean;
 	readonly width?: number;
@@ -85,10 +86,19 @@ if (markup.trim() === "") {
 	);
 }
 
+// Resolved through auto-install like every other package here, so the pinned
+// version comes from Bun's cache and the page needs no network to be styled.
+const tailwindScript =
+	job.tailwindPackage === undefined
+		? undefined
+		: await Bun.file(
+				Bun.resolveSync(job.tailwindPackage, import.meta.dir),
+			).text();
+
 const html = buildHtml({
 	markup,
 	head: job.head,
-	tailwind: job.tailwind,
+	tailwindScript,
 	transparent: job.transparent ?? false,
 });
 

@@ -109,7 +109,7 @@ const sharedFlags = {
 	noTailwind: Flag.Boolean("no-tailwind").pipe(
 		Flag.withDefault(false),
 		Flag.withDescription(
-			"Skip the Tailwind CDN script. Tailwind is injected by default, which requires network access; disable it for fully offline renders.",
+			"Skip Tailwind. Tailwind v4 is inlined by default, so class names style the composition with no network access needed.",
 		),
 	),
 	json: jsonFlag,

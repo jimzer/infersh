@@ -20,7 +20,6 @@ const page = (
 		mode: "ask",
 		title: "page.tsx",
 		data: undefined,
-		tailwind: false,
 		...overrides,
 	});
 
@@ -90,9 +89,12 @@ describe("buildPage", () => {
 		);
 	});
 
-	test("includes Tailwind only when asked", () => {
-		expect(page({ tailwind: true })).toContain("cdn.tailwindcss.com");
-		expect(page({ tailwind: false })).not.toContain("cdn.tailwindcss.com");
+	test("inlines Tailwind only when given, and never from a CDN", () => {
+		expect(page({ tailwindScript: "var tw=1;" })).toContain(
+			"<script>var tw=1;</script>",
+		);
+		expect(page()).not.toContain("var tw=1;");
+		expect(page({ tailwindScript: "var tw=1;" })).not.toContain("cdn.");
 	});
 
 	test("appends --head after the base style so it can override it", () => {

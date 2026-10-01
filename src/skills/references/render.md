@@ -152,8 +152,15 @@ Nothing is copied in either case, so a large asset folder costs nothing.
   a Chrome build, then later renders are a few seconds. Prefer `--frame` while
   iterating.
 - Fonts come from the system unless you inject a `<link>` with `--head`.
-  Tailwind is injected by default for image and pdf; `--no-tailwind` disables it
-  and is needed for a fully offline render.
+- **Tailwind is v4** for image and pdf, inlined into the page, so class names
+  work offline with no setup. Most Tailwind you have seen is v3; the
+  differences that bite:
+  - `bg-opacity-50` and friends are gone and silently do nothing. Use the slash
+    form: `bg-black/50`, `text-white/80`.
+  - A bare `border` takes the text colour, not grey. Name it: `border border-zinc-200`.
+  - Gradients are `bg-linear-to-r` (the old `bg-gradient-to-r` still works).
+  Class names built at runtime (`` `bg-${color}-500` ``) do work here, because
+  Tailwind compiles in the page. `--no-tailwind` skips it.
 
 ## Output
 
