@@ -7,7 +7,14 @@
  */
 
 import { join } from "node:path";
-import { Clock, Console, Effect, type FileSystem, Option } from "effect";
+import {
+	Clock,
+	Console,
+	Effect,
+	type FileSystem,
+	Option,
+	Schema,
+} from "effect";
 import type { HttpClient } from "effect/http";
 import { cacheDir, readFile, writeFile } from "./stage.ts";
 import {
@@ -68,17 +75,13 @@ export const cachePath = (
 	env: Record<string, string | undefined> = process.env,
 ): string => join(cacheDir(env), "update-check.json");
 
+const CacheFile = Schema.fromJsonString(
+	Schema.Struct({ checkedAt: Schema.Finite, latest: Schema.NonEmptyString }),
+);
+
 /** Any cache problem is ignored — a broken cache must not break the CLI. */
-export const parseCache = (raw: string): CacheEntry | null => {
-	try {
-		const parsed = JSON.parse(raw) as Partial<CacheEntry>;
-		if (typeof parsed.checkedAt !== "number") return null;
-		if (typeof parsed.latest !== "string" || parsed.latest === "") return null;
-		return { checkedAt: parsed.checkedAt, latest: parsed.latest };
-	} catch {
-		return null;
-	}
-};
+export const parseCache = (raw: string): CacheEntry | null =>
+	Option.getOrNull(Schema.decodeUnknownOption(CacheFile)(raw));
 
 const readCache = (
 	path: string,

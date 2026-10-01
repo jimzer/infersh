@@ -18,8 +18,9 @@
  * back as data. See `docs/adrs/0014`.
  */
 
-import { Context, Effect, Layer, Option, Redacted } from "effect";
+import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
 import { HttpClient } from "effect/http";
+import { parseJson } from "./json.ts";
 import {
 	type ProviderId,
 	providerIds,
@@ -83,74 +84,95 @@ export type Report =
 
 // --- Parsing --------------------------------------------------------------
 
-const asNumber = (value: unknown): number | undefined =>
-	typeof value === "number" && Number.isFinite(value) ? value : undefined;
+/**
+ * A number when it is one, and absent otherwise.
+ *
+ * For fields that only add detail: a provider sending one of them as a string
+ * or null should not cost the whole balance, so it is dropped instead of
+ * failing the decode.
+ */
+const OptionalNumber = Schema.optionalKey(
+	Schema.Finite.pipe(Schema.catchDecoding(() => Effect.succeed(Option.none()))),
+);
+
+const FalBilling = Schema.Struct({
+	// Absent whenever expand=credits was not sent, or the account has no credit
+	// balance at all — neither is an error, but neither is a number either.
+	credits: Schema.Struct({
+		current_balance: Schema.Finite,
+		currency: Schema.optional(Schema.String),
+	}),
+});
 
 /** `{ username, credits: { current_balance, currency } }` → a balance. */
-export const parseFalBilling = (payload: unknown): Balance | null => {
-	if (typeof payload !== "object" || payload === null) return null;
-	const credits = (payload as { credits?: unknown }).credits;
-	// Absent whenever expand=credits was not sent, or the account has no
-	// credit balance at all — neither is an error, but neither is a number.
-	if (typeof credits !== "object" || credits === null) return null;
-	const available = asNumber(
-		(credits as { current_balance?: unknown }).current_balance,
-	);
-	if (available === undefined) return null;
-	const currency = (credits as { currency?: unknown }).currency;
-	return {
-		available,
-		currency: typeof currency === "string" ? currency : "USD",
-	};
-};
+export const parseFalBilling = (payload: unknown): Balance | null =>
+	Option.match(Schema.decodeUnknownOption(FalBilling)(payload), {
+		onNone: () => null,
+		onSome: ({ credits }) => ({
+			available: credits.current_balance,
+			currency: credits.currency ?? "USD",
+		}),
+	});
+
+const BrightDataBalance = Schema.Struct({
+	balance: Schema.Finite,
+	// The live response calls it pending_costs; the docs say pending_balance.
+	pending_costs: OptionalNumber,
+	pending_balance: OptionalNumber,
+	credit: OptionalNumber,
+	prepayment: OptionalNumber,
+});
 
 /** `{ balance, credit, prepayment, pending_costs }` → a balance. */
-export const parseBrightDataBalance = (payload: unknown): Balance | null => {
-	if (typeof payload !== "object" || payload === null) return null;
-	const raw = payload as Record<string, unknown>;
-	const available = asNumber(raw.balance);
-	if (available === undefined) return null;
+export const parseBrightDataBalance = (payload: unknown): Balance | null =>
+	Option.match(Schema.decodeUnknownOption(BrightDataBalance)(payload), {
+		onNone: () => null,
+		onSome: (raw) => {
+			const pending = raw.pending_costs ?? raw.pending_balance;
+			const detail: Record<string, number> = {};
+			if (raw.credit !== undefined) detail.credit = raw.credit;
+			if (raw.prepayment !== undefined) detail.prepayment = raw.prepayment;
+			return {
+				available: raw.balance,
+				// This endpoint reports no currency at all; Bright Data accounts are USD.
+				currency: "USD",
+				...(pending === undefined ? {} : { pending }),
+				...(Object.keys(detail).length === 0 ? {} : { detail }),
+			};
+		},
+	});
 
-	// The live response calls it pending_costs; the docs say pending_balance.
-	const pending = asNumber(raw.pending_costs) ?? asNumber(raw.pending_balance);
-
-	const detail: Record<string, number> = {};
-	for (const field of ["credit", "prepayment"] as const) {
-		const value = asNumber(raw[field]);
-		if (value !== undefined) detail[field] = value;
-	}
-
-	return {
-		available,
-		// This endpoint reports no currency at all; Bright Data accounts are USD.
-		currency: "USD",
-		...(pending === undefined ? {} : { pending }),
-		...(Object.keys(detail).length === 0 ? {} : { detail }),
-	};
-};
+const Credits = Schema.Struct({
+	total_credits: Schema.Finite,
+	total_usage: Schema.Finite,
+});
 
 /**
  * `{ data: { total_credits, total_usage } }` → a balance.
  *
  * OpenRouter reports the two totals rather than what is left, so the balance
  * is derived. Both must be present: subtracting a missing `total_usage` from
- * credits would report the full purchase as still available.
+ * credits would report the full purchase as still available. The totals are
+ * accepted at the top level too.
  */
-export const parseOpenRouterCredits = (payload: unknown): Balance | null => {
-	if (typeof payload !== "object" || payload === null) return null;
-	const data = (payload as { data?: unknown }).data;
-	const source = (
-		typeof data === "object" && data !== null ? data : payload
-	) as Record<string, unknown>;
-	const granted = asNumber(source.total_credits);
-	const used = asNumber(source.total_usage);
-	if (granted === undefined || used === undefined) return null;
-	return {
-		available: granted - used,
-		currency: "USD",
-		detail: { granted, used },
-	};
-};
+export const parseOpenRouterCredits = (payload: unknown): Balance | null =>
+	Option.match(
+		Schema.decodeUnknownOption(
+			Schema.Union([Schema.Struct({ data: Credits }), Credits]),
+		)(payload),
+		{
+			onNone: () => null,
+			onSome: (decoded) => {
+				const { total_credits: granted, total_usage: used } =
+					"data" in decoded ? decoded.data : decoded;
+				return {
+					available: granted - used,
+					currency: "USD",
+					detail: { granted, used },
+				};
+			},
+		},
+	);
 
 // --- Rendering ------------------------------------------------------------
 
@@ -272,14 +294,6 @@ const make = (options: {
 			);
 			return { status: response.status, text };
 		});
-
-	const parseJson = (text: string): unknown => {
-		try {
-			return JSON.parse(text);
-		} catch {
-			return null;
-		}
-	};
 
 	interface Endpoint {
 		readonly provider: ProviderId;

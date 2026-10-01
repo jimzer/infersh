@@ -14,8 +14,10 @@ import {
 	Layer,
 	Option,
 	Schedule,
+	Schema,
 } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
+import { JsonObject, JsonText, lenient } from "./json.ts";
 import { lazyKey, MissingKeyError, type Secrets } from "./secrets.ts";
 
 /** Every unlocker and SERP call goes through this one endpoint. */
@@ -83,15 +85,15 @@ export const parseInput = (
 ):
 	| { readonly options: Record<string, unknown> }
 	| { readonly error: string } => {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch (cause) {
-		return { error: `--input is not valid JSON: ${cause}` };
+	const decoded = Schema.decodeUnknownOption(JsonText)(raw);
+	if (Option.isNone(decoded)) {
+		return { error: "--input is not valid JSON." };
 	}
-	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+	const object = Schema.decodeUnknownOption(JsonObject)(decoded.value);
+	if (Option.isNone(object)) {
 		return { error: "--input must be a JSON object of options." };
 	}
+	const parsed = object.value;
 	const unknownKeys = Object.keys(parsed).filter(
 		(key) => !allowed.includes(key),
 	);
@@ -100,7 +102,7 @@ export const parseInput = (
 			error: `--input has unknown option${unknownKeys.length > 1 ? "s" : ""}: ${unknownKeys.join(", ")}.\nAccepted: ${[...allowed].sort().join(", ")}`,
 		};
 	}
-	return { options: parsed as Record<string, unknown> };
+	return { options: parsed };
 };
 
 /** Explicit flags win over the same key in `--input`. */
@@ -197,27 +199,30 @@ export const requestBody = (
 export const parseBody = (text: string): unknown => {
 	const trimmed = text.trimStart();
 	if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return text;
-	try {
-		return JSON.parse(text);
-	} catch {
-		return parseJsonLines(text) ?? text;
-	}
+	return Option.getOrElse(
+		Schema.decodeUnknownOption(JsonText)(text),
+		() => parseJsonLines(text) ?? text,
+	);
 };
 
 /** An array when every non-empty line is its own JSON value, else null. */
 export const parseJsonLines = (text: string): ReadonlyArray<unknown> | null => {
 	const lines = text.split("\n").filter((line) => line.trim() !== "");
 	if (lines.length < 2) return null;
-	const rows: unknown[] = [];
-	for (const line of lines) {
-		try {
-			rows.push(JSON.parse(line));
-		} catch {
-			return null;
-		}
-	}
-	return rows;
+	const rows = Option.all(
+		lines.map((line) => Schema.decodeUnknownOption(JsonText)(line)),
+	);
+	return Option.getOrNull(rows);
 };
+
+/** A snapshot's progress; only `status` is read. */
+const Progress = Schema.Struct({ status: lenient(Schema.String) });
+
+/** The 202 body of a job deferred to a snapshot. */
+const Deferred = Schema.Struct({ snapshot_id: Schema.NonEmptyString });
+
+/** A snapshot not yet ready: retried, never shown to the user as such. */
+class StillRunning extends Data.TaggedError("StillRunning") {}
 
 export interface BdataShape {
 	/** Scrape one or more URLs through the web unlocker. */
@@ -383,15 +388,17 @@ const make = (options: {
 			yield* Console.error(`Polling snapshot ${snapshotId}...`);
 
 			const check = Effect.gen(function* () {
-				const status = (yield* getJson(
-					`${DATASET_PROGRESS_URL}/${snapshotId}`,
-					key,
-				)) as { status?: string };
-				if (status.status === "ready" || status.status === "failed") {
-					return status;
+				const progress = Option.getOrElse(
+					Schema.decodeUnknownOption(Progress)(
+						yield* getJson(`${DATASET_PROGRESS_URL}/${snapshotId}`, key),
+					),
+					() => ({ status: undefined }),
+				);
+				if (progress.status === "ready" || progress.status === "failed") {
+					return progress;
 				}
-				yield* Console.error(`  status: ${status.status ?? "unknown"}`);
-				return yield* Effect.fail("pending" as const);
+				yield* Console.error(`  status: ${progress.status ?? "unknown"}`);
+				return yield* Effect.fail(new StillRunning());
 			});
 
 			const final = yield* check.pipe(
@@ -400,13 +407,12 @@ const make = (options: {
 						Schedule.upTo({ duration: "10 minutes" }),
 					),
 				),
-				Effect.mapError(
-					(cause): BdataError =>
-						typeof cause === "string"
-							? new BdataError({
-									reason: `Snapshot ${snapshotId} was still running after 10 minutes.\nCheck it later with the snapshot ID above.`,
-								})
-							: cause,
+				Effect.catchTag("StillRunning", () =>
+					Effect.fail(
+						new BdataError({
+							reason: `Snapshot ${snapshotId} was still running after 10 minutes.\nCheck it later with the snapshot ID above.`,
+						}),
+					),
 				),
 			);
 
@@ -489,15 +495,17 @@ const make = (options: {
 					// 202 means the work was deferred to a snapshot rather than run
 					// inline, which is the normal path for discovery.
 					if (response.status === 202) {
-						const body = parseBody(text) as { snapshot_id?: string };
-						if (!body.snapshot_id) {
+						const deferred = Schema.decodeUnknownOption(Deferred)(
+							parseBody(text),
+						);
+						if (Option.isNone(deferred)) {
 							return yield* Effect.fail(
 								new BdataError({
 									reason: `Bright Data deferred the job but returned no snapshot id: ${text.slice(0, 300)}`,
 								}),
 							);
 						}
-						return yield* pollAndDownload(body.snapshot_id, key);
+						return yield* pollAndDownload(deferred.value.snapshot_id, key);
 					}
 
 					if (response.status >= 400) {

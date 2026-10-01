@@ -3,8 +3,9 @@
  */
 
 import { readFileSync } from "node:fs";
-import { Console, Effect, Option } from "effect";
+import { Console, Effect, Option, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
+import { JsonText } from "../json.ts";
 import {
 	formatContext,
 	formatPrice,
@@ -25,11 +26,11 @@ const readSchema = (raw: string): Effect.Effect<unknown, OpenRouterError> =>
 						}),
 				})
 			: raw;
-		return yield* Effect.try({
-			try: () => JSON.parse(source) as unknown,
-			catch: (cause) =>
-				new OpenRouterError({ reason: `--schema is not valid JSON: ${cause}` }),
-		});
+		return yield* Schema.decodeUnknownEffect(JsonText)(source).pipe(
+			Effect.mapError(
+				() => new OpenRouterError({ reason: "--schema is not valid JSON." }),
+			),
+		);
 	});
 
 const responseCmd = Command.make(

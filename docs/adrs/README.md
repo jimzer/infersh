@@ -27,7 +27,8 @@ time to discover and would otherwise be rediscovered the hard way.
 | [20](0020-tailwind-v4-inlined.md) | Tailwind v4, inlined into every page — and why not the CDN or a build step |
 | [21](0021-render-html-one-portable-file.md) | `render html` writes one portable file — and three Bun traps on the way |
 | [22](0022-render-on-playwrights-pinned-headless-shell.md) | Render on Playwright's pinned headless shell — 2.6x faster, and stable across browser updates |
-| [23](0023-staging-on-effect-filesystem-and-childprocess.md) | Staging on Effect's FileSystem and ChildProcess — and why not Schema yet |
+| [23](0023-staging-on-effect-filesystem-and-childprocess.md) | Staging on Effect's FileSystem and ChildProcess |
+| [24](0024-effect-schema-for-all-parsing.md) | Effect Schema for all parsing — leniency declared, passthrough checked with Schema.is |
 
 ## Writing one
 

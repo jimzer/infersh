@@ -52,14 +52,16 @@ read, which blocks a child once enough is written to it; it is now discarded.
 and a half-written `ready.json` is a retried failure rather than an exception
 from `JSON.parse` that crashed the CLI.
 
-**Effect Schema was tried for that, and rejected on size.** It was not in the
-bundle before, and decoding those two small files with it added **146 KB** to
-the single-file bundle, about 6 ms on the startup of every command, since the
-bundle loads everything up front. A guarded parse gives the same robustness.
-If Schema is adopted later, it should be adopted broadly — decoding provider
-responses in place of hand-written casts — so the cost buys something.
+**Effect Schema was tried for that and first rejected on size — wrongly.**
+Decoding those two files with it appeared to add 146 KB to the bundle and
+about 6 ms to every command's startup. That was Bun 1.4.0's bundler. Rebuilt
+with Bun 1.4.2, the same change costs about 2 KB and 0.4 ms, because 1.4.2
+tree-shakes Effect far better — the whole bundle fell from 978 KB to 786 KB on
+the upgrade alone. Schema is now used for all parsing; see ADR 24. Compare
+bundle sizes only between builds made with the same Bun.
 
-**The rest has a measured cost too.** `ChildProcess` brings Effect's Stream
-machinery: +67 KB and about 3 ms of startup. Paid knowingly, for scoped process
+**`ChildProcess` had a measured cost too**, on Bun 1.4.0: Effect's Stream
+machinery, +67 KB and about 3 ms of startup, paid knowingly for scoped process
 lifetimes. With provider keys now read on first use (`lazyKey` in
-`secrets.ts`), startup is still lower than before this work: 80 ms → 69 ms median for `infer --version` on the bundle.
+`secrets.ts`), startup was still lower than before this work: 80 ms → 69 ms
+median for `infer --version`. On Bun 1.4.2 it is about 55 ms.

@@ -5,8 +5,16 @@
 
 import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { Data, type Duration, Effect, FileSystem } from "effect";
+import {
+	Data,
+	type Duration,
+	Effect,
+	FileSystem,
+	Option,
+	Schema,
+} from "effect";
 import { HttpClient } from "effect/http";
+import { decodeEach } from "./json.ts";
 import {
 	ASSET_NAME,
 	LATEST_RELEASE_API,
@@ -36,32 +44,32 @@ const HEADERS = {
 
 const fail = (reason: string) => new UpdateError({ reason });
 
-/** Reads a release body defensively: GitHub's shape is not ours to trust. */
-export const parseRelease = (body: unknown): Release | string => {
-	const value = (typeof body === "object" && body !== null ? body : {}) as {
-		tag_name?: unknown;
-		assets?: unknown;
-	};
-	if (typeof value.tag_name !== "string" || value.tag_name === "") {
-		return `No published release found for ${REPO}.`;
-	}
-	const assets = Array.isArray(value.assets) ? value.assets : [];
-	const asset = assets.find(
-		(a): a is { browser_download_url: string } =>
-			typeof a === "object" &&
-			a !== null &&
-			(a as { name?: unknown }).name === ASSET_NAME &&
-			typeof (a as { browser_download_url?: unknown }).browser_download_url ===
-				"string",
-	);
-	if (asset === undefined) {
-		return `Release ${value.tag_name} has no ${ASSET_NAME} asset attached.`;
-	}
-	return {
-		version: normalize(value.tag_name),
-		assetUrl: asset.browser_download_url,
-	};
-};
+const ReleaseBody = Schema.Struct({
+	tag_name: Schema.NonEmptyString,
+	assets: Schema.Array(Schema.Unknown),
+});
+
+const Asset = Schema.Struct({
+	name: Schema.String,
+	browser_download_url: Schema.String,
+});
+
+/** A release body, or why it is not one this CLI can install from. */
+export const parseRelease = (body: unknown): Release | string =>
+	Option.match(Schema.decodeUnknownOption(ReleaseBody)(body), {
+		onNone: () => `No published release found for ${REPO}.`,
+		onSome: (release) => {
+			const asset = decodeEach(Asset)(release.assets).find(
+				(a) => a.name === ASSET_NAME,
+			);
+			return asset === undefined
+				? `Release ${release.tag_name} has no ${ASSET_NAME} asset attached.`
+				: {
+						version: normalize(release.tag_name),
+						assetUrl: asset.browser_download_url,
+					};
+		},
+	});
 
 /**
  * The most recent published release, with the exact asset URL for its tag.

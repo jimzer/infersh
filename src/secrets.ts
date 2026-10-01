@@ -7,7 +7,7 @@
  * history. Tests use {@link layerMemory} instead of touching the real store.
  */
 
-import { Context, Data, Effect, Layer, Option, Redacted } from "effect";
+import { Context, Data, Effect, Layer, Option, Redacted, Schema } from "effect";
 
 /** Keychain service name. Every key is stored under `<SERVICE>/<providerId>`. */
 const SERVICE = "infersh";
@@ -55,15 +55,14 @@ export const providerIds = Object.keys(providers) as [
  * box without libsecret, a container, some WSL setups. Distinct from "the
  * store works but holds nothing", which is not an error.
  */
-const isStoreUnavailable = (cause: unknown): boolean => {
-	if (typeof cause !== "object" || cause === null) return false;
-	const code = (cause as { code?: unknown }).code;
-	if (code === "ERR_SECRETS_PLATFORM_ERROR") return true;
-	const message = (cause as { message?: unknown }).message;
-	return (
-		typeof message === "string" && /libsecret|not available/i.test(message)
-	);
-};
+const StoreUnavailable = Schema.Union([
+	Schema.Struct({ code: Schema.Literal("ERR_SECRETS_PLATFORM_ERROR") }),
+	Schema.Struct({
+		message: Schema.String.check(Schema.isPattern(/libsecret|not available/i)),
+	}),
+]);
+
+const isStoreUnavailable = Schema.is(StoreUnavailable);
 
 export class SecretsError extends Data.TaggedError("SecretsError")<{
 	readonly action: "read" | "write" | "delete";

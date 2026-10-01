@@ -23,6 +23,7 @@ import {
 	type FileSystem,
 	Layer,
 	Schedule,
+	Schema,
 } from "effect";
 import { ChildProcess, type ChildProcessSpawner } from "effect/process";
 import { escapeForScript, inlineScript } from "./html.ts";
@@ -376,52 +377,16 @@ const openInBrowser = (
 		stderr: "ignore",
 	}).pipe(Effect.ignore);
 
-const STATUSES: ReadonlyArray<UiStatus> = [
-	"submitted",
-	"cancelled",
-	"done",
-	"timeout",
-];
+/** What the child writes once it has bound a port. */
+const Ready = Schema.fromJsonString(Schema.Struct({ port: Schema.Finite }));
 
-/**
- * Parses a JSON file the child wrote, failing instead of throwing.
- *
- * Deliberately not Effect Schema: it is not otherwise in the bundle, and
- * pulling it in for two tiny files adds 146 KB — about 6 ms to the startup of
- * every command.
- */
-const parseJson = (
-	raw: string,
-): Effect.Effect<Record<string, unknown>, UiError> =>
-	Effect.try({
-		try: () => {
-			const value: unknown = JSON.parse(raw);
-			if (typeof value !== "object" || value === null) throw new Error();
-			return value as Record<string, unknown>;
-		},
-		catch: () => new UiError({ reason: "unreadable" }),
-	});
-
-/** The port in `ready.json`, or a failure while it is missing or partial. */
-const readPort = (raw: string): Effect.Effect<number, UiError> =>
-	Effect.flatMap(parseJson(raw), (value) =>
-		typeof value.port === "number" && Number.isFinite(value.port)
-			? Effect.succeed(value.port)
-			: Effect.fail(new UiError({ reason: "no port yet" })),
-	);
-
-/** The answer in `result.json`. */
-const readAnswer = (
-	raw: string,
-): Effect.Effect<{ status: UiStatus; payload: unknown }, UiError> =>
-	Effect.flatMap(parseJson(raw), (value) =>
-		STATUSES.includes(value.status as UiStatus)
-			? Effect.succeed({
-					status: value.status as UiStatus,
-					payload: value.payload ?? null,
-				})
-			: Effect.fail(new UiError({ reason: "no status" })),
-	);
+/** What the child writes when the page answers, times out or is cancelled. */
+const Answer = Schema.fromJsonString(
+	Schema.Struct({
+		status: Schema.Literals(["submitted", "cancelled", "done", "timeout"]),
+		payload: Schema.optional(Schema.Unknown),
+	}),
+);
 
 /**
  * Waits for the child to report the port it actually bound.
@@ -436,7 +401,7 @@ const awaitReady = (
 ): Effect.Effect<number, UiError, FileSystem.FileSystem> =>
 	Effect.gen(function* () {
 		const raw = yield* readFile(path);
-		return yield* readPort(raw);
+		return (yield* Schema.decodeUnknownEffect(Ready)(raw)).port;
 	}).pipe(
 		Effect.retry({
 			schedule: Schedule.spaced("50 millis"),
@@ -539,7 +504,7 @@ const make = (platform: Context.Context<Platform>): UiShape => ({
 			);
 
 			const answer = yield* readFile(resultPath).pipe(
-				Effect.flatMap(readAnswer),
+				Effect.flatMap(Schema.decodeUnknownEffect(Answer)),
 				Effect.mapError(
 					() =>
 						new UiError({ reason: "The page server left no answer behind." }),

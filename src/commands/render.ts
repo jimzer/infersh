@@ -3,8 +3,9 @@
  */
 
 import { basename, resolve } from "node:path";
-import { Console, Effect, Option } from "effect";
+import { Console, Effect, Option, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
+import { JsonText } from "../json.ts";
 import { emitJson, jsonFlag } from "../output.ts";
 import {
 	CODECS,
@@ -80,10 +81,11 @@ const resolveProps = (
 					catch: (cause) =>
 						new RenderError({ reason: `Could not read --props: ${cause}` }),
 				});
-		return yield* Effect.try({
-			try: () => JSON.parse(raw) as unknown,
-			catch: () => new RenderError({ reason: "--props is not valid JSON." }),
-		});
+		return yield* Schema.decodeUnknownEffect(JsonText)(raw).pipe(
+			Effect.mapError(
+				() => new RenderError({ reason: "--props is not valid JSON." }),
+			),
+		);
 	});
 
 const sharedFlags = {

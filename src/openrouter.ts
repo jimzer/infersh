@@ -12,8 +12,9 @@
  * one self-contained prompt.
  */
 
-import { Context, Data, Effect, Layer, Option } from "effect";
+import { Context, Data, Effect, Layer, Option, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
+import { decodeEach, JsonObject, JsonText, lenient } from "./json.ts";
 import { lazyKey, MissingKeyError, type Secrets } from "./secrets.ts";
 
 const RESPONSES_URL = "https://openrouter.ai/api/v1/responses";
@@ -65,16 +66,14 @@ export interface ResponseResult {
  * and the common causes are cheap to catch here: a non-object, or a top level
  * that is not `"type": "object"`.
  */
-export const validateSchema = (schema: unknown): string | null => {
-	if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
-		return "--schema must be a JSON object describing a JSON Schema.";
-	}
-	const type = (schema as { type?: unknown }).type;
-	if (type !== undefined && type !== "object") {
-		return `--schema must describe an object at the top level, got "${String(type)}". Wrap it: {"type":"object","properties":{...}}`;
-	}
-	return null;
-};
+export const validateSchema = (schema: unknown): string | null =>
+	Option.match(Schema.decodeUnknownOption(JsonObject)(schema), {
+		onNone: () => "--schema must be a JSON object describing a JSON Schema.",
+		onSome: ({ type }) =>
+			type !== undefined && type !== "object"
+				? `--schema must describe an object at the top level, got "${String(type)}". Wrap it: {"type":"object","properties":{...}}`
+				: null,
+	});
 
 /**
  * The JSON body for `/responses`.
@@ -112,11 +111,16 @@ export const responseBody = (
 
 // --- Response -------------------------------------------------------------
 
-const asString = (value: unknown): string | undefined =>
-	typeof value === "string" ? value : undefined;
+/** One item of the Responses API `output` array: a message or reasoning. */
+const OutputItem = Schema.Struct({
+	type: Schema.String,
+	content: lenient(Schema.Array(Schema.Unknown)),
+});
 
-const asNumber = (value: unknown): number | undefined =>
-	typeof value === "number" && Number.isFinite(value) ? value : undefined;
+const ContentPart = Schema.Struct({
+	type: Schema.String,
+	text: lenient(Schema.String),
+});
 
 /**
  * Joins every `output_text` across the message items.
@@ -129,63 +133,60 @@ const collectText = (
 	output: ReadonlyArray<unknown>,
 	itemType: string,
 	contentType: string,
-): string => {
-	const parts: Array<string> = [];
-	for (const item of output) {
-		if (typeof item !== "object" || item === null) continue;
-		if ((item as { type?: unknown }).type !== itemType) continue;
-		const content = (item as { content?: unknown }).content;
-		if (!Array.isArray(content)) continue;
-		for (const part of content) {
-			if (typeof part !== "object" || part === null) continue;
-			if ((part as { type?: unknown }).type !== contentType) continue;
-			const text = asString((part as { text?: unknown }).text);
-			if (text !== undefined) parts.push(text);
-		}
-	}
-	return parts.join("");
-};
+): string =>
+	decodeEach(OutputItem)(output)
+		.filter((item) => item.type === itemType)
+		.flatMap((item) => decodeEach(ContentPart)(item.content ?? []))
+		.flatMap((part) =>
+			part.type === contentType && part.text !== undefined ? [part.text] : [],
+		)
+		.join("");
 
-export const usageOf = (payload: unknown): Usage => {
-	if (typeof payload !== "object" || payload === null) return {};
-	const usage = (payload as { usage?: unknown }).usage;
-	if (typeof usage !== "object" || usage === null) return {};
-	const record = usage as Record<string, unknown>;
-	const details = record.output_tokens_details;
-	const reasoningTokens =
-		typeof details === "object" && details !== null
-			? asNumber((details as { reasoning_tokens?: unknown }).reasoning_tokens)
-			: undefined;
-	const inputTokens = asNumber(record.input_tokens);
-	const outputTokens = asNumber(record.output_tokens);
-	const cost = asNumber(record.cost);
-	return {
-		...(inputTokens === undefined ? {} : { inputTokens }),
-		...(outputTokens === undefined ? {} : { outputTokens }),
-		...(reasoningTokens === undefined ? {} : { reasoningTokens }),
-		...(cost === undefined ? {} : { cost }),
-	};
-};
+const WithUsage = Schema.Struct({
+	usage: Schema.Struct({
+		input_tokens: lenient(Schema.Finite),
+		output_tokens: lenient(Schema.Finite),
+		cost: lenient(Schema.Finite),
+		output_tokens_details: lenient(
+			Schema.Struct({ reasoning_tokens: lenient(Schema.Finite) }),
+		),
+	}),
+});
+
+export const usageOf = (payload: unknown): Usage =>
+	Option.match(Schema.decodeUnknownOption(WithUsage)(payload), {
+		onNone: () => ({}),
+		onSome: ({ usage }) => ({
+			inputTokens: usage.input_tokens,
+			outputTokens: usage.output_tokens,
+			reasoningTokens: usage.output_tokens_details?.reasoning_tokens,
+			cost: usage.cost,
+		}),
+	});
+
+const ResponseBody = Schema.Struct({
+	output: Schema.Array(Schema.Unknown),
+	model: lenient(Schema.String),
+	status: lenient(Schema.String),
+});
 
 export const parseResponse = (
 	payload: unknown,
 	fallbackModel: string,
-): ResponseResult | null => {
-	if (typeof payload !== "object" || payload === null) return null;
-	const output = (payload as { output?: unknown }).output;
-	if (!Array.isArray(output)) return null;
-
-	const reasoning = collectText(output, "reasoning", "reasoning_text");
-	return {
-		text: collectText(output, "message", "output_text"),
-		...(reasoning === "" ? {} : { reasoning }),
-		usage: usageOf(payload),
-		model: asString((payload as { model?: unknown }).model) ?? fallbackModel,
-		...(asString((payload as { status?: unknown }).status) === undefined
-			? {}
-			: { status: asString((payload as { status?: unknown }).status) }),
-	};
-};
+): ResponseResult | null =>
+	Option.match(Schema.decodeUnknownOption(ResponseBody)(payload), {
+		onNone: () => null,
+		onSome: (body) => {
+			const reasoning = collectText(body.output, "reasoning", "reasoning_text");
+			return {
+				text: collectText(body.output, "message", "output_text"),
+				...(reasoning === "" ? {} : { reasoning }),
+				usage: usageOf(payload),
+				model: body.model ?? fallbackModel,
+				...(body.status === undefined ? {} : { status: body.status }),
+			};
+		},
+	});
 
 // --- Model catalogue ------------------------------------------------------
 
@@ -241,64 +242,47 @@ export const modelsQuery = (filters: ModelFilters): string => {
 	return query.toString();
 };
 
-/** Prices arrive as strings in dollars per token; humans think per million. */
-const perMillion = (value: unknown): number | undefined => {
-	const parsed =
-		typeof value === "string"
-			? Number(value)
-			: typeof value === "number"
-				? value
-				: Number.NaN;
-	return Number.isFinite(parsed) ? parsed * 1_000_000 : undefined;
-};
+/** Prices arrive as strings of dollars per token, sometimes as numbers. */
+const Price = lenient(Schema.Union([Schema.Finite, Schema.FiniteFromString]));
 
-export const parseModels = (payload: unknown): ReadonlyArray<Model> => {
-	if (typeof payload !== "object" || payload === null) return [];
-	const data = (payload as { data?: unknown }).data;
-	if (!Array.isArray(data)) return [];
+const Pricing = lenient(Schema.Struct({ prompt: Price, completion: Price }));
 
-	const models: Array<Model> = [];
-	for (const entry of data) {
-		if (typeof entry !== "object" || entry === null) continue;
-		const record = entry as Record<string, unknown>;
-		const id = asString(record.id);
-		if (id === undefined) continue;
+/** Dollars per token → dollars per million tokens, which is how humans compare. */
+const perMillion = (perToken: number | undefined): number | undefined =>
+	perToken === undefined ? undefined : perToken * 1_000_000;
 
-		const pricing = record.pricing as Record<string, unknown> | undefined;
-		const architecture = record.architecture as
-			| Record<string, unknown>
-			| undefined;
-		const reasoning = record.reasoning;
-		const supported = record.supported_parameters;
+const ModelEntry = Schema.Struct({
+	id: Schema.String,
+	name: lenient(Schema.String),
+	description: lenient(Schema.String),
+	context_length: lenient(Schema.Finite),
+	pricing: Pricing,
+	architecture: lenient(Schema.Struct({ modality: lenient(Schema.String) })),
+	supported_parameters: lenient(Schema.Array(Schema.Unknown)),
+	// Present, as an object, only on models that can reason.
+	reasoning: lenient(Schema.Record(Schema.String, Schema.Unknown)),
+});
 
-		models.push({
-			id,
-			...(asString(record.name) === undefined
-				? {}
-				: { name: asString(record.name) }),
-			...(asString(record.description) === undefined
-				? {}
-				: { description: asString(record.description) }),
-			...(asNumber(record.context_length) === undefined
-				? {}
-				: { contextLength: asNumber(record.context_length) }),
-			...(perMillion(pricing?.prompt) === undefined
-				? {}
-				: { inputPrice: perMillion(pricing?.prompt) }),
-			...(perMillion(pricing?.completion) === undefined
-				? {}
-				: { outputPrice: perMillion(pricing?.completion) }),
-			...(asString(architecture?.modality) === undefined
-				? {}
-				: { modality: asString(architecture?.modality) }),
-			supportedParameters: Array.isArray(supported)
-				? supported.filter((p): p is string => typeof p === "string")
-				: [],
-			reasoning: typeof reasoning === "object" && reasoning !== null,
-		});
-	}
-	return models;
-};
+const ModelsBody = Schema.Struct({ data: Schema.Array(Schema.Unknown) });
+
+export const parseModels = (payload: unknown): ReadonlyArray<Model> =>
+	Option.match(Schema.decodeUnknownOption(ModelsBody)(payload), {
+		onNone: () => [],
+		onSome: ({ data }) =>
+			decodeEach(ModelEntry)(data).map((entry) => ({
+				id: entry.id,
+				name: entry.name,
+				description: entry.description,
+				contextLength: entry.context_length,
+				inputPrice: perMillion(entry.pricing?.prompt),
+				outputPrice: perMillion(entry.pricing?.completion),
+				modality: entry.architecture?.modality,
+				supportedParameters: decodeEach(Schema.String)(
+					entry.supported_parameters ?? [],
+				),
+				reasoning: entry.reasoning !== undefined,
+			})),
+	});
 
 /** Applies the filters the API does not, in the order that rejects fastest. */
 export const filterModels = (
@@ -335,44 +319,33 @@ export const filterModels = (
 		: matched.slice(0, filters.limit);
 };
 
-export const parseEndpoints = (payload: unknown): ReadonlyArray<Endpoint> => {
-	if (typeof payload !== "object" || payload === null) return [];
-	const data = (payload as { data?: unknown }).data;
-	if (typeof data !== "object" || data === null) return [];
-	const list = (data as { endpoints?: unknown }).endpoints;
-	if (!Array.isArray(list)) return [];
+const EndpointEntry = Schema.Struct({
+	provider_name: Schema.String,
+	context_length: lenient(Schema.Finite),
+	pricing: Pricing,
+	quantization: lenient(Schema.String),
+	uptime_last_30m: lenient(Schema.Finite),
+	max_completion_tokens: lenient(Schema.Finite),
+});
 
-	const endpoints: Array<Endpoint> = [];
-	for (const entry of list) {
-		if (typeof entry !== "object" || entry === null) continue;
-		const record = entry as Record<string, unknown>;
-		const provider = asString(record.provider_name);
-		if (provider === undefined) continue;
-		const pricing = record.pricing as Record<string, unknown> | undefined;
-		endpoints.push({
-			provider,
-			...(asNumber(record.context_length) === undefined
-				? {}
-				: { contextLength: asNumber(record.context_length) }),
-			...(perMillion(pricing?.prompt) === undefined
-				? {}
-				: { inputPrice: perMillion(pricing?.prompt) }),
-			...(perMillion(pricing?.completion) === undefined
-				? {}
-				: { outputPrice: perMillion(pricing?.completion) }),
-			...(asString(record.quantization) === undefined
-				? {}
-				: { quantization: asString(record.quantization) }),
-			...(asNumber(record.uptime_last_30m) === undefined
-				? {}
-				: { uptime: asNumber(record.uptime_last_30m) }),
-			...(asNumber(record.max_completion_tokens) === undefined
-				? {}
-				: { maxCompletionTokens: asNumber(record.max_completion_tokens) }),
-		});
-	}
-	return endpoints;
-};
+const EndpointsBody = Schema.Struct({
+	data: Schema.Struct({ endpoints: Schema.Array(Schema.Unknown) }),
+});
+
+export const parseEndpoints = (payload: unknown): ReadonlyArray<Endpoint> =>
+	Option.match(Schema.decodeUnknownOption(EndpointsBody)(payload), {
+		onNone: () => [],
+		onSome: ({ data }) =>
+			decodeEach(EndpointEntry)(data.endpoints).map((entry) => ({
+				provider: entry.provider_name,
+				contextLength: entry.context_length,
+				inputPrice: perMillion(entry.pricing?.prompt),
+				outputPrice: perMillion(entry.pricing?.completion),
+				quantization: entry.quantization,
+				uptime: entry.uptime_last_30m,
+				maxCompletionTokens: entry.max_completion_tokens,
+			})),
+	});
 
 /** `131072` → `131K`, because exact token counts are noise in a listing. */
 export const formatContext = (tokens: number | undefined): string => {
@@ -460,13 +433,14 @@ const make = (options: {
 					}),
 				);
 			}
-			return yield* Effect.try({
-				try: () => JSON.parse(text) as unknown,
-				catch: (cause) =>
-					new OpenRouterError({
-						reason: `OpenRouter returned a non-JSON body: ${cause}`,
-					}),
-			});
+			return yield* Schema.decodeUnknownEffect(JsonText)(text).pipe(
+				Effect.mapError(
+					(cause) =>
+						new OpenRouterError({
+							reason: `OpenRouter returned a non-JSON body: ${cause.message}`,
+						}),
+				),
+			);
 		});
 
 	return {
@@ -548,16 +522,14 @@ const make = (options: {
 					);
 				}
 
-				let payload: unknown;
-				try {
-					payload = JSON.parse(text);
-				} catch (cause) {
-					return yield* Effect.fail(
-						new OpenRouterError({
-							reason: `OpenRouter returned a non-JSON body: ${cause}`,
-						}),
-					);
-				}
+				const payload = yield* Schema.decodeUnknownEffect(JsonText)(text).pipe(
+					Effect.mapError(
+						(cause) =>
+							new OpenRouterError({
+								reason: `OpenRouter returned a non-JSON body: ${cause.message}`,
+							}),
+					),
+				);
 
 				const result = parseResponse(payload, request.model);
 				if (result === null) {

@@ -2,9 +2,10 @@
  * `infer fal` — search, inspect and run fal.ai models.
  */
 
-import { Console, Effect, Option } from "effect";
+import { Console, Effect, Option, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 import { extractInputSchema, Fal, FalError } from "../fal.ts";
+import { JsonObject } from "../json.ts";
 import { emitJson, jsonFlag } from "../output.ts";
 
 // --- models ---------------------------------------------------------------
@@ -211,11 +212,13 @@ const runCmd = Command.make(
 		Effect.gen(function* () {
 			const fal = yield* Fal;
 
-			const parsed = yield* Effect.try({
-				try: () => JSON.parse(config.input) as unknown,
-				catch: (cause) =>
-					new FalError({ reason: `--input is not valid JSON: ${cause}` }),
-			});
+			const parsed = yield* Schema.decodeUnknownEffect(
+				Schema.fromJsonString(JsonObject),
+			)(config.input).pipe(
+				Effect.mapError(
+					() => new FalError({ reason: "--input must be a JSON object." }),
+				),
+			);
 
 			const input = yield* fal.resolveAssets(parsed);
 			const output = yield* fal.run(config.endpointId, input);

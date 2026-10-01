@@ -2,15 +2,10 @@
  * `infer groq` — speech-to-text via Groq's Whisper endpoints.
  */
 
-import { Console, Effect, Option } from "effect";
+import { Console, Effect, Option, Schema } from "effect";
 import { Command, Flag } from "effect/cli";
-import {
-	GRANULARITIES,
-	Groq,
-	GroqError,
-	MODELS,
-	RESPONSE_FORMATS,
-} from "../groq.ts";
+import { GRANULARITIES, Groq, MODELS, RESPONSE_FORMATS } from "../groq.ts";
+import { JsonText } from "../json.ts";
 import { emitJson, jsonFlag, wrapPayload } from "../output.ts";
 
 const TRANSCRIBE_DESCRIPTION = `Transcribe speech from an audio or video file.
@@ -123,10 +118,10 @@ const transcribeCmd = Command.make(
 			if (config.json) {
 				// The API returns JSON already unless --response-format text, so only
 				// a plain-text body needs wrapping.
-				const parsed = yield* Effect.try({
-					try: () => JSON.parse(result) as unknown,
-					catch: () => new GroqError({ reason: "unreachable" }),
-				}).pipe(Effect.orElseSucceed(() => result));
+				const parsed = Option.getOrElse(
+					Schema.decodeUnknownOption(JsonText)(result),
+					() => result,
+				);
 				return yield* emitJson(wrapPayload(parsed, "text"));
 			}
 			yield* Console.log(result);

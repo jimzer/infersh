@@ -10,8 +10,9 @@ import { mkdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createFalClient, type FalClient } from "@fal-ai/client";
 import { dereference } from "@readme/openapi-parser";
-import { Console, Context, Data, Effect, Layer, Option } from "effect";
+import { Console, Context, Data, Effect, Layer, Option, Schema } from "effect";
 import { HttpClient } from "effect/http";
+import { JsonObject, lenient } from "./json.ts";
 import { lazyKey, MissingKeyError, type Secrets } from "./secrets.ts";
 
 const PLATFORM_API = "https://api.fal.ai/v1";
@@ -27,22 +28,32 @@ export class FalError extends Data.TaggedError("FalError")<{
 
 // --- Model search ---------------------------------------------------------
 
-export interface ModelSummary {
-	readonly endpoint_id: string;
-	readonly metadata?: {
-		readonly display_name?: string;
-		readonly category?: string;
-		readonly description?: string;
-		readonly status?: string;
-		readonly tags?: ReadonlyArray<string>;
-	};
-}
+/**
+ * A model search response, declaring only the fields this CLI reads.
+ *
+ * Checked with `Schema.is` rather than decoded: decoding rebuilds the value
+ * from the declared fields, and `--json` promises the full metadata.
+ */
+const ModelSummary = Schema.Struct({
+	endpoint_id: Schema.String,
+	metadata: Schema.optional(
+		Schema.Struct({ category: Schema.optional(Schema.String) }),
+	),
+});
+export type ModelSummary = typeof ModelSummary.Type;
 
-export interface ModelSearchResult {
-	readonly models: ReadonlyArray<ModelSummary>;
-	readonly next_cursor?: string | null;
-	readonly has_more: boolean;
-}
+const ModelSearchResult = Schema.Struct({
+	models: Schema.Array(ModelSummary),
+	next_cursor: Schema.optional(Schema.NullOr(Schema.String)),
+	has_more: Schema.Boolean,
+});
+export type ModelSearchResult = typeof ModelSearchResult.Type;
+
+const isModelSearchResult = Schema.is(ModelSearchResult);
+
+const ErrorBody = Schema.Struct({
+	error: Schema.Struct({ message: Schema.String }),
+});
 
 export interface SearchParams {
 	readonly q?: string;
@@ -74,34 +85,42 @@ export interface InputSchema {
 	readonly required: ReadonlyArray<string>;
 }
 
+const SubmitPath = Schema.Struct({
+	post: Schema.Struct({
+		requestBody: Schema.Struct({
+			content: Schema.Struct({
+				"application/json": Schema.Struct({
+					schema: Schema.Struct({
+						properties: Schema.optional(
+							Schema.Record(Schema.String, Schema.Unknown),
+						),
+						required: Schema.optional(Schema.Array(Schema.String)),
+					}),
+				}),
+			}),
+		}),
+	}),
+});
+
+const Spec = Schema.Struct({
+	paths: Schema.Record(Schema.String, Schema.Unknown),
+});
+
 /**
  * Pulls the request body schema out of a model's OpenAPI document. Queue
  * management paths are skipped — only the submit endpoint takes model input.
  */
-interface SpecPath {
-	readonly post?: {
-		readonly requestBody?: {
-			readonly content?: Record<
-				string,
-				{
-					readonly schema?: {
-						readonly properties?: Record<string, unknown>;
-						readonly required?: ReadonlyArray<string>;
-					};
-				}
-			>;
-		};
-	};
-}
-
 export const extractInputSchema = (spec: unknown): InputSchema | null => {
-	const paths =
-		(spec as { paths?: Record<string, SpecPath> } | null)?.paths ?? {};
-	for (const [path, methods] of Object.entries(paths)) {
+	const paths = Option.match(Schema.decodeUnknownOption(Spec)(spec), {
+		onNone: () => [],
+		onSome: (decoded) => Object.entries(decoded.paths),
+	});
+	for (const [path, methods] of paths) {
 		if (path.includes("{request_id}")) continue;
-		const schema =
-			methods?.post?.requestBody?.content?.["application/json"]?.schema;
-		if (!schema) continue;
+		const submit = Schema.decodeUnknownOption(SubmitPath)(methods);
+		if (Option.isNone(submit)) continue;
+		const { schema } =
+			submit.value.post.requestBody.content["application/json"];
 		return {
 			properties: schema.properties ?? {},
 			required: schema.required ?? [],
@@ -176,8 +195,12 @@ export interface OutputAsset {
 	readonly contentType?: string;
 }
 
-const isAssetUrl = (value: unknown): value is string =>
-	typeof value === "string" && /^https?:\/\//i.test(value);
+/** How fal represents a produced file, wherever it appears in the output. */
+const FileObject = Schema.Struct({
+	url: Schema.String,
+	file_name: lenient(Schema.String),
+	content_type: lenient(Schema.String),
+});
 
 /**
  * Every produced asset, in the order the model returned them.
@@ -197,21 +220,17 @@ export const collectOutputAssets = (
 		}
 		if (node === null || typeof node !== "object") return;
 
-		const record = node as Record<string, unknown>;
-		if (isAssetUrl(record.url)) {
+		const file = Schema.decodeUnknownOption(FileObject)(node);
+		if (Option.isSome(file) && /^https?:\/\//i.test(file.value.url)) {
 			assets.push({
-				url: record.url,
-				fileName:
-					typeof record.file_name === "string" ? record.file_name : undefined,
-				contentType:
-					typeof record.content_type === "string"
-						? record.content_type
-						: undefined,
+				url: file.value.url,
+				fileName: file.value.file_name,
+				contentType: file.value.content_type,
 			});
 			// Do not descend into a file object; its fields are metadata.
 			return;
 		}
-		for (const value of Object.values(record)) walk(value);
+		for (const value of Object.values(node)) walk(value);
 	};
 	walk(output);
 	return assets;
@@ -257,11 +276,16 @@ export const outputPaths = (
 	});
 
 /** fal validation errors carry the useful detail in a nested body. */
-const describeFalError = (cause: unknown): string => {
-	const body = (cause as { body?: { detail?: unknown } })?.body;
-	if (body?.detail) return JSON.stringify(body.detail);
-	return `${cause}`;
-};
+const ApiErrorDetail = Schema.Struct({
+	body: Schema.Struct({ detail: Schema.Unknown }),
+});
+
+const describeFalError = (cause: unknown): string =>
+	Option.match(Schema.decodeUnknownOption(ApiErrorDetail)(cause), {
+		onNone: () => `${cause}`,
+		onSome: ({ body }) =>
+			body.detail ? JSON.stringify(body.detail) : `${cause}`,
+	});
 
 // --- The service ----------------------------------------------------------
 
@@ -427,15 +451,27 @@ const make = (options: {
 				);
 
 				if (response.status >= 400) {
-					const detail = (body as { error?: { message?: string } })?.error
-						?.message;
+					const detail = Option.match(
+						Schema.decodeUnknownOption(ErrorBody)(body),
+						{
+							onNone: () => JSON.stringify(body),
+							onSome: ({ error }) => error.message,
+						},
+					);
 					return yield* Effect.fail(
 						new FalError({
-							reason: `Model search failed (${response.status}): ${detail ?? JSON.stringify(body)}`,
+							reason: `Model search failed (${response.status}): ${detail}`,
 						}),
 					);
 				}
-				return body as unknown as ModelSearchResult;
+				if (!isModelSearchResult(body)) {
+					return yield* Effect.fail(
+						new FalError({
+							reason: `Unexpected search response: ${JSON.stringify(body).slice(0, 300)}`,
+						}),
+					);
+				}
+				return body;
 			}),
 
 		fetchSpec: (endpointId) =>
@@ -453,10 +489,17 @@ const make = (options: {
 		run: (endpointId, input) =>
 			Effect.gen(function* () {
 				const client = yield* requireClient;
+				const payload = yield* Schema.decodeUnknownEffect(JsonObject)(
+					input,
+				).pipe(
+					Effect.mapError(
+						() => new FalError({ reason: "--input must be a JSON object." }),
+					),
+				);
 				const result = yield* Effect.tryPromise({
 					try: () =>
 						client.subscribe(endpointId, {
-							input: input as Record<string, unknown>,
+							input: payload,
 							logs: true,
 							onQueueUpdate: (update) => {
 								if (update.status === "IN_QUEUE") {
