@@ -21,6 +21,8 @@ interface Job {
 	readonly outputPath: string;
 	readonly assetDir?: string;
 	readonly head?: string;
+	/** `playwright-core@version`. Pinned, because it decides the browser build. */
+	readonly playwrightPackage: string;
 	/** `name@version` of Tailwind's browser build, or absent for none. */
 	readonly tailwindPackage?: string;
 	readonly waitUntil: string;
@@ -104,40 +106,111 @@ const html = buildHtml({
 
 // --- 2. Markup -> browser -------------------------------------------------
 
-const { chromium } = await import("playwright-core");
+// Pinned, and so is the browser: each Playwright release names the exact
+// headless-shell build it drives. See `docs/adrs/0022`.
+const { chromium } = (await import(
+	job.playwrightPackage
+)) as typeof import("playwright-core");
+
+const missingBrowser = (error: unknown): boolean =>
+	String(error).includes("Executable doesn't exist");
+
+/**
+ * Downloads Playwright's headless shell, once; every later render reuses it.
+ *
+ * Its own progress output is dropped: it is long, and the parent streams
+ * this process's stderr live, so one line saying what is happening and why
+ * it is slow is the useful part.
+ */
+const installShell = async (): Promise<boolean> => {
+	console.error(
+		"Downloading Chrome headless shell, once — about 200 MB, so this takes a minute...",
+	);
+	const proc = Bun.spawn(
+		[
+			process.execPath,
+			"x",
+			job.playwrightPackage,
+			"install",
+			"--only-shell",
+			"chromium",
+		],
+		{ stdout: "ignore", stderr: "pipe" },
+	);
+	const [stderr, code] = await Promise.all([
+		new Response(proc.stderr).text(),
+		proc.exited,
+	]);
+	if (code !== 0) {
+		// Playwright dumps a whole error object; its first Error line says why.
+		const reason =
+			stderr.split("\n").find((line) => line.startsWith("Error")) ??
+			stderr.trim().split("\n").at(-1) ??
+			"unknown error";
+		console.error(
+			`Could not download it (${reason.trim()}); falling back to an installed Chrome.`,
+		);
+	}
+	return code === 0;
+};
+
+type Attempt = {
+	readonly label: string;
+	readonly options: Record<string, unknown>;
+};
 
 const launch = async () => {
-	const attempts: Array<{ label: string; options: Record<string, unknown> }> =
-		[];
-	if (process.env.CHROME_PATH) {
-		attempts.push({
-			label: `CHROME_PATH (${process.env.CHROME_PATH})`,
-			options: { executablePath: process.env.CHROME_PATH },
-		});
-	}
-	attempts.push({ label: "system Chrome", options: { channel: "chrome" } });
-	for (const path of CHROME_CANDIDATES) {
-		attempts.push({ label: path, options: { executablePath: path } });
-	}
-	// Last resort: a browser installed by `playwright install`. Only works when
-	// its build number matches this playwright-core, so it is tried last.
-	attempts.push({ label: "playwright's own browser", options: {} });
+	const tryLaunch = (attempt: Attempt) =>
+		chromium.launch({ headless: true, args: LAUNCH_ARGS, ...attempt.options });
 
-	for (const attempt of attempts) {
-		try {
-			return await chromium.launch({
-				headless: true,
-				args: LAUNCH_ARGS,
-				...attempt.options,
-			});
-		} catch {}
+	const tried: string[] = [];
+	const first = async (attempts: ReadonlyArray<Attempt>) => {
+		for (const attempt of attempts) {
+			tried.push(attempt.label);
+			try {
+				return await tryLaunch(attempt);
+			} catch {}
+		}
+		return undefined;
+	};
+
+	// An explicit choice wins over everything.
+	if (process.env.CHROME_PATH) {
+		const chosen = await first([
+			{
+				label: `CHROME_PATH (${process.env.CHROME_PATH})`,
+				options: { executablePath: process.env.CHROME_PATH },
+			},
+		]);
+		if (chosen) return chosen;
 	}
+
+	// Playwright's headless shell: pinned, so a render does not change when
+	// the system Chrome updates, and about 2.5x faster to start.
+	const shell: Attempt = { label: "Playwright's headless shell", options: {} };
+	tried.push(shell.label);
+	try {
+		return await tryLaunch(shell);
+	} catch (error) {
+		if (missingBrowser(error) && (await installShell())) {
+			try {
+				return await tryLaunch(shell);
+			} catch {}
+		}
+	}
+
+	// Offline on a first run, or a platform Playwright has no shell for.
+	const fallback = await first([
+		{ label: "system Chrome", options: { channel: "chrome" } },
+		...CHROME_CANDIDATES.map((path) => ({
+			label: path,
+			options: { executablePath: path },
+		})),
+	]);
+	if (fallback) return fallback;
+
 	return fail(
-		`No Chrome or Chromium could be launched. Tried: ${attempts
-			.map((a) => a.label)
-			.join(
-				", ",
-			)}.\nInstall Google Chrome, or set CHROME_PATH to an executable.`,
+		`No Chrome or Chromium could be launched. Tried: ${tried.join(", ")}.\nCheck your connection so the headless shell can download, install Google Chrome, or set CHROME_PATH to an executable.`,
 	);
 };
 

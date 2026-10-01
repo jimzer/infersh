@@ -69,6 +69,17 @@ export const bareImports = (code: string): ReadonlyArray<string> => {
 };
 
 const CHILD_SOURCE: string = childSource;
+
+/**
+ * The Playwright that drives image and pdf renders.
+ *
+ * Pinned, because each release names the exact headless-shell build it
+ * launches — an unpinned one would silently swap the browser under every
+ * render. It must equal the `playwright-core` devDependency, which supplies
+ * the child's types; a test holds the two together. See `docs/adrs/0022`.
+ */
+export const PLAYWRIGHT_VERSION = "1.63.0";
+const PLAYWRIGHT_PACKAGE = `playwright-core@${PLAYWRIGHT_VERSION}`;
 const SHARED_SOURCE: string = sharedSource;
 
 // These live here rather than in render-shared.ts because that file is text
@@ -344,9 +355,12 @@ const runChild = (
 ): Effect.Effect<string, RenderError> =>
 	withTempDir((dir) =>
 		Effect.gen(function* () {
+			// Without this an imported image becomes a path to a file the move
+			// into the temp directory left behind, and renders as a broken icon.
 			const { path: compositionPath } = yield* isolateComposition(
 				request.source,
 				dir,
+				{ inlineImports: true },
 			);
 			yield* write(join(dir, "render-shared.ts"), SHARED_SOURCE);
 			const childPath = join(dir, "render-child.ts");
@@ -359,31 +373,28 @@ const runChild = (
 				outputPath: request.outputPath,
 				assetDir: request.assetDir,
 				head: request.head,
+				playwrightPackage: PLAYWRIGHT_PACKAGE,
 				tailwindPackage: request.tailwind ? TAILWIND_PACKAGE : undefined,
 				waitUntil: request.waitUntil,
 			});
 
-			const result = yield* Effect.tryPromise({
-				try: async () => {
-					const proc = Bun.spawn(
-						["bun", "--install=fallback", "run", childPath, payload],
-						{ cwd: dir, stdout: "pipe", stderr: "pipe" },
-					);
-					const [stderr, code] = await Promise.all([
-						new Response(proc.stderr).text(),
-						proc.exited,
-					]);
-					return { stderr, code };
-				},
+			// stderr is passed straight through rather than collected: a first
+			// render downloads the headless shell for about a minute, and
+			// collected output would make that look like a hang.
+			const code = yield* Effect.tryPromise({
+				try: () =>
+					Bun.spawn(["bun", "--install=fallback", "run", childPath, payload], {
+						cwd: dir,
+						stdout: "ignore",
+						stderr: "inherit",
+					}).exited,
 				catch: (cause) =>
 					new RenderError({ reason: `Could not run the renderer: ${cause}` }),
 			});
 
-			if (result.code !== 0) {
+			if (code !== 0) {
 				return yield* Effect.fail(
-					new RenderError({
-						reason: `Render failed:\n${result.stderr.trim()}`,
-					}),
+					new RenderError({ reason: "Render failed; see the output above." }),
 				);
 			}
 			return request.outputPath;
@@ -723,10 +734,12 @@ const make = (): RenderShape => ({
 	toVideo: (request) =>
 		withTempDir((dir) =>
 			Effect.gen(function* () {
+				// Remotion's <Img> retries a missing file for ~20s, then fails the
+				// whole render, so an import left as a path is fatal here.
 				const { path: flattened } = yield* isolateComposition(
 					request.source,
 					dir,
-					{ productionJsx: true },
+					{ productionJsx: true, inlineImports: true },
 				);
 				const code = yield* Effect.tryPromise({
 					try: () => Bun.file(flattened).text(),

@@ -29,6 +29,8 @@ export default ({ title = "Untitled" }: { title?: string }) => (
   default so the composition renders standalone.
 - It may import **other `.tsx` files** by relative path — they are inlined
   automatically, at any depth.
+- It may import **images, fonts and other files** (`import logo from "./logo.png"`).
+  They are embedded, so this works in every renderer with no `--assets`.
 - It may import **any npm package**. Nothing needs installing; packages are
   fetched into Bun's cache on first use and reused. Charts, icons, date
   libraries all work.
@@ -189,8 +191,12 @@ nothing. For html only the files the composition names are embedded.
 
 ## Requirements and cost
 
-- Google Chrome or Chromium must be installed. Set `CHROME_PATH` to choose one.
-- Images and PDFs render in well under a second.
+- Image and pdf use Playwright's headless Chrome, **pinned**, so a render does
+  not change when the system browser updates. The **first ever** image or pdf
+  render downloads it — about 200 MB, roughly a minute — and says so on
+  stderr; do not mistake that for a hang. Offline, an installed Chrome is used
+  instead. `CHROME_PATH` overrides both.
+- After that, images and PDFs render in about a second.
 - Video is slower: the first ever video render installs packages and downloads
   a Chrome build, then later renders are a few seconds. Prefer `--frame` while
   iterating.

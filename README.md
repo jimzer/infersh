@@ -67,10 +67,13 @@ infer fal run fal-ai/flux/dev/image-to-image \
 infer render image card.tsx -o card.png --props '{"title":"Hello"}'
 infer render image card.tsx --assets ./public --width 1200 --scale 2
 infer render pdf invoice.tsx --props ./data.json --margin 1cm
+infer render html dashboard.tsx --props ./data.json -o dashboard.html
 infer render video intro.tsx -o intro.mp4 --duration 90
 infer render video intro.tsx --frame 45 -o check.png   # one frame, no encoding
 cat card.tsx | infer render image - -o card.png
 ```
+
+`render html` writes one self-contained page that stays interactive — state and click handlers work. React, Tailwind, imported files and anything under `--assets` that the composition names are all inlined, so the file opens offline from any folder with nothing beside it.
 
 `render video` uses [Remotion](https://remotion.dev), so compositions can animate with `useCurrentFrame()` and `Sequence`. Frame size and length come from a `config` export on the composition, with flags overriding it:
 
@@ -84,7 +87,7 @@ export const config = { width: 1080, height: 1920, fps: 30, durationInFrames: 90
 
 A composition is a `.tsx` file with a default export. It may import other `.tsx` files and **any npm package** — both are resolved for you at render time from Bun's cache, with no project setup. Renders happen in isolation, so nothing is picked up from whatever directory the file lives in. Local assets referenced by relative URL are served straight from disk by request interception; no server is started and nothing is copied.
 
-Requires Google Chrome or Chromium (`CHROME_PATH` to pick one).
+Image and pdf use Playwright's headless Chrome, pinned so renders stay stable across browser updates. The first render downloads it once (about 200 MB); offline, an installed Chrome is used instead. `CHROME_PATH` overrides both.
 
 ### Bright Data
 

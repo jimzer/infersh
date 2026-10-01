@@ -223,7 +223,9 @@ Bun's cache, so a composition can use any npm library without any
 project setup. It renders in isolation and never picks up dependencies
 from the surrounding directory.
 
-Requires Google Chrome or Chromium; set CHROME_PATH to choose one.`,
+Uses Playwright's headless Chrome, pinned so renders do not change when
+your browser updates. The first render downloads it once (about 200 MB);
+offline, an installed Chrome is used instead. CHROME_PATH overrides both.`,
 	),
 	Command.withExamples([
 		{
@@ -363,7 +365,9 @@ Bun's cache, so a composition can use any npm library without any
 project setup. It renders in isolation and never picks up dependencies
 from the surrounding directory.
 
-Requires Google Chrome or Chromium; set CHROME_PATH to choose one.`,
+Uses Playwright's headless Chrome, pinned so renders do not change when
+your browser updates. The first render downloads it once (about 200 MB);
+offline, an installed Chrome is used instead. CHROME_PATH overrides both.`,
 	),
 	Command.withExamples([
 		{

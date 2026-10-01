@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { PLAYWRIGHT_VERSION } from "./render.ts";
 import {
 	ASSET_ORIGIN,
 	assetPathFor,
@@ -141,5 +142,16 @@ describe("assetPathFor", () => {
 
 	test("returns null for a malformed url", () => {
 		expect(assetPathFor("not a url", dir)).toBeNull();
+	});
+});
+
+describe("PLAYWRIGHT_VERSION", () => {
+	test("matches the devDependency that types the render child", async () => {
+		// The child is typechecked against the devDependency but runs the pinned
+		// version, so a drift would let the types describe a different API.
+		const pkg = await Bun.file(
+			new URL("../package.json", import.meta.url),
+		).json();
+		expect(pkg.devDependencies["playwright-core"]).toBe(PLAYWRIGHT_VERSION);
 	});
 });

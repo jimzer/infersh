@@ -60,7 +60,8 @@ types omit `dataurl` from `Loader`, correctly. Instead the flatten pass uses the
 default loader, which emits each imported file as an asset output and leaves
 the exact string `"./logo-<hash>.png"` in the code; that literal is swapped for
 a data URI built from the output's own bytes and type. An exact match, not a
-guess, and it works for any file type Bun can import.
+guess, and it works for any file type Bun can import. Image, pdf and video
+turned out to drop imports the same way, and now share this swap (ADR 22).
 
 **Bun's resolver caches a missing `node_modules` for the life of the process.**
 A composition read from stdin is flattened from inside the staged directory,

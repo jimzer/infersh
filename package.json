@@ -19,7 +19,7 @@
 		"@types/bun": "1.4.2",
 		"@types/react": "^19.2.17",
 		"@types/react-dom": "^19.2.3",
-		"playwright-core": "^1.62.0"
+		"playwright-core": "1.63.0"
 	},
 	"peerDependencies": {
 		"typescript": "^7.0.2"
