@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a release of the infer CLI. Reads the full diff since the previous release, classifies it into breaking changes / features / fixes, computes the next semver number from what actually changed, writes user-facing release notes, checks the shipped agent skill still matches the code, publishes the GitHub release, then smoke tests it by updating this machine's own install through the official channel. Use when asked to release, cut a release, ship a version, or publish a new version.
+description: Cut a release of the infer CLI. Checks the versions pinned in code against the latest published ones and offers to bump them, reads the full diff since the previous release, classifies it into breaking changes / features / fixes, computes the next semver number from what actually changed, writes user-facing release notes, checks the shipped agent skill still matches the code, publishes the GitHub release, then smoke tests it by updating this machine's own install through the official channel. Use when asked to release, cut a release, ship a version, or publish a new version.
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 user-invocable: true
 ---
@@ -31,7 +31,37 @@ gh run list -R jimzer/infersh --limit 1 --json status,conclusion,displayTitle
 Stop and report if the tree is dirty, the branch is not `main`, HEAD is not
 pushed, or the latest CI run on `main` failed. Do not release over red CI.
 
-## 2. Establish the baseline
+## 2. Check the pins
+
+Some versions are pinned in code, not in `package.json`, because they are
+installed at render time: Tailwind's browser build, Playwright (which decides
+the Chrome build), Remotion and the React it is tested against. Nothing bumps
+them on its own, so every release is the moment to look:
+
+```bash
+just pins        # code pins against npm, with what to check before bumping each
+bun outdated     # the ^-ranged dependencies in package.json
+```
+
+If everything is current, say so in one line and move on.
+
+If a pin is behind, **do not bump it silently and do not skip it.** Tell the
+user which pins are behind and what each one's `check` line says, and ask
+whether to bump them in this release. For each bump they want:
+
+- Change the constant `just pins` names under `where:` — and anything it says
+  must move with it (Playwright's devDependency, Remotion's React).
+- Do what its `check:` line says, with a real render, not just the tests.
+- Commit it on its own, push, and wait for CI before continuing.
+
+Bumps happen **before** step 3, so they are part of the diff this release
+describes — a new Remotion or Tailwind can change what users' renders look
+like, and that belongs in the notes.
+
+For `bun outdated`: bumping Biome means updating the `$schema` version in
+`biome.json` to match, or every `just checkall` prints a warning.
+
+## 3. Establish the baseline
 
 ```bash
 PREV=$(gh release list -R jimzer/infersh --limit 1 --json tagName --jq '.[0].tagName')
@@ -42,7 +72,7 @@ git diff --stat "$PREV"..HEAD
 If there are no commits since `$PREV`, say so and stop — there is nothing to
 release.
 
-## 3. Read the actual diff
+## 4. Read the actual diff
 
 ```bash
 git diff "$PREV"..HEAD -- src/          # behaviour
@@ -55,7 +85,7 @@ intent; the diff describes what users get. A commit titled "refactor" that
 changes a flag name is a breaking change, and a "fix" that adds a subcommand
 is a feature.
 
-## 4. Classify every change
+## 5. Classify every change
 
 Sort each change into exactly one bucket:
 
@@ -72,7 +102,7 @@ Judge from the user's side of the CLI. Changes under `src/` are usually
 user-facing; changes under `docs/`, `.github/`, `*.test.ts` and `Justfile`
 usually are not — but verify rather than assume.
 
-## 5. Check the shipped skill is still true
+## 6. Check the shipped skill is still true
 
 `infer skills add` installs `src/skills/SKILL.md` and `src/skills/references/*.md`
 from inside the binary, so a release ships whatever those files currently say.
@@ -105,7 +135,7 @@ a command missing from the list is a real gap, but a command present in it may
 still be described wrongly.
 
 Then re-read the reference file for every area this release touched, and check
-each claim in it against the diff from step 3.
+each claim in it against the diff from step 4.
 
 **If anything is out of date, stop.** Do not quietly rewrite the skill as part
 of the release, and do not release with it wrong — an agent reading a stale
@@ -115,7 +145,7 @@ Only continue once they answer.
 
 If everything still holds, say so in one line and move on.
 
-## 6. Compute the version
+## 7. Compute the version
 
 **This project stays on `0.x` permanently and never releases a 1.0.** The
 leading zero is not a phase to grow out of — it is the versioning scheme. Do not
@@ -139,7 +169,7 @@ State the computed version and the single change that drove it before
 proceeding. If the only changes are internal, do not invent a release — report
 that and ask whether to cut one anyway.
 
-## 7. Write the notes
+## 8. Write the notes
 
 Group by the buckets above, most consequential first, omitting empty groups.
 Write for someone who runs the CLI and has not read the code: name the command
@@ -163,7 +193,7 @@ curl -fsSL https://raw.githubusercontent.com/jimzer/infersh/main/install.sh | sh
 
 Show the notes and the version to the user before publishing.
 
-## 8. Verify locally, then publish
+## 9. Verify locally, then publish
 
 ```bash
 just checkall
@@ -184,7 +214,7 @@ gh release create "v<version>" -R jimzer/infersh \
 The tag is created by `gh release create` against the pushed HEAD, so push
 first.
 
-## 9. Verify the release actually shipped
+## 10. Verify the release actually shipped
 
 ```bash
 RUN=$(gh run list -R jimzer/infersh --workflow=release --limit 1 --json databaseId --jq '.[0].databaseId')
@@ -206,7 +236,7 @@ publishing — it once made a no-op update report success (`docs/adrs/0004`).
 `raw.githubusercontent.com` caches the same way, so a just-pushed `install.sh`
 is not immediately what `curl | sh` fetches.
 
-## 10. Dogfood the release through the official channel
+## 11. Dogfood the release through the official channel
 
 Checking that the asset exists is not the same as checking that a user can
 get it. Update this machine's own install the way a user would, then exercise

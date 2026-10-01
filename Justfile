@@ -43,6 +43,10 @@ bundle v=version:
     @chmod +x dist/infer.js
     @echo "built dist/infer.js v{{v}} ($(wc -c < dist/infer.js | tr -d ' ') bytes)"
 
+# Versions pinned in code, against the latest published ones
+pins:
+    @bun run scripts/pins.ts
+
 # Run the CLI from source
 run *args:
     bun run src/main.ts {{args}}
