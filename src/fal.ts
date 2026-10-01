@@ -19,7 +19,7 @@ import {
 	Option,
 	Redacted,
 } from "effect";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 import { MissingKeyError, Secrets } from "./secrets.ts";
 
 const PLATFORM_API = "https://api.fal.ai/v1";

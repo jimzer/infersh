@@ -16,7 +16,7 @@ import {
 	Redacted,
 	Schedule,
 } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { MissingKeyError, Secrets } from "./secrets.ts";
 
 /** Every unlocker and SERP call goes through this one endpoint. */

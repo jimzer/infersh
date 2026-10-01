@@ -3,7 +3,7 @@
  */
 
 import { Console, Effect, Option } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/cli";
 import { extractInputSchema, Fal, FalError } from "../fal.ts";
 import { emitJson, jsonFlag } from "../output.ts";
 
@@ -12,41 +12,41 @@ import { emitJson, jsonFlag } from "../output.ts";
 const modelsCmd = Command.make(
 	"models",
 	{
-		query: Flag.string("q").pipe(
+		query: Flag.String("q").pipe(
 			Flag.withMetavar("text"),
 			Flag.optional,
 			Flag.withDescription(
 				"Free-text search across model names, descriptions and categories.",
 			),
 		),
-		category: Flag.string("category").pipe(
+		category: Flag.String("category").pipe(
 			Flag.withMetavar("name"),
 			Flag.optional,
 			Flag.withDescription(
 				"Restrict to one category, e.g. text-to-image, image-to-video, training.",
 			),
 		),
-		status: Flag.choice("status", ["active", "deprecated"]).pipe(
+		status: Flag.Literals("status", ["active", "deprecated"]).pipe(
 			Flag.optional,
 			Flag.withDescription(
 				"Restrict to active or deprecated models. Omit to include both.",
 			),
 		),
-		endpointId: Flag.string("endpoint-id").pipe(
+		endpointId: Flag.String("endpoint-id").pipe(
 			Flag.withMetavar("id"),
 			Flag.atLeast(0),
 			Flag.withDescription(
 				"Look up specific endpoints by exact ID instead of searching. Repeat the flag for up to 50 models.",
 			),
 		),
-		limit: Flag.integer("limit").pipe(
+		limit: Flag.Int("limit").pipe(
 			Flag.withMetavar("n"),
 			Flag.optional,
 			Flag.withDescription(
 				"Maximum number of models to return in one page. Defaults to the API's own page size.",
 			),
 		),
-		cursor: Flag.string("cursor").pipe(
+		cursor: Flag.String("cursor").pipe(
 			Flag.withMetavar("token"),
 			Flag.optional,
 			Flag.withDescription(
@@ -124,12 +124,13 @@ An API key is optional here; providing one only raises the rate limit.`,
 const schemaCmd = Command.make(
 	"schema",
 	{
-		endpointId: Argument.string("endpoint-id").pipe(
+		endpointId: Argument.String("endpoint-id").pipe(
 			Argument.withDescription(
 				"The model to inspect, e.g. fal-ai/flux/dev. Find one with `infer fal models`.",
 			),
 		),
-		full: Flag.boolean("full").pipe(
+		full: Flag.Boolean("full").pipe(
+			Flag.withDefault(false),
 			Flag.withDescription(
 				"Print the entire OpenAPI document rather than only the input schema.",
 			),
@@ -186,18 +187,18 @@ required — exactly what --input on \`infer fal run\` expects.`,
 const runCmd = Command.make(
 	"run",
 	{
-		endpointId: Argument.string("endpoint-id").pipe(
+		endpointId: Argument.String("endpoint-id").pipe(
 			Argument.withDescription(
 				"The model to run, e.g. fal-ai/flux/schnell. Find one with `infer fal models`.",
 			),
 		),
-		input: Flag.string("input").pipe(
+		input: Flag.String("input").pipe(
 			Flag.withMetavar("json"),
 			Flag.withDescription(
 				`The model's input as a JSON object, e.g. '{"prompt":"a cat"}'. Run \`infer fal schema <endpoint-id>\` to see the accepted fields. Any value that is a path to an existing local file is uploaded to the fal CDN and replaced by its URL, at any depth and whatever the field is called; each upload is reported on stderr.`,
 			),
 		),
-		output: Flag.string("output").pipe(
+		output: Flag.String("output").pipe(
 			Flag.withMetavar("path"),
 			Flag.optional,
 			Flag.withDescription(
@@ -275,7 +276,7 @@ Requires a fal.ai API key: run \`infer keys set\` or set FAL_KEY.`,
 const cdnCmd = Command.make(
 	"cdn",
 	{
-		files: Argument.string("file").pipe(
+		files: Argument.String("file").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"One or more local files to upload. Each URL is printed on its own line, in the order given.",

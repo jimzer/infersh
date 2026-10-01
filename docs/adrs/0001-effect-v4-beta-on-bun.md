@@ -1,6 +1,6 @@
 # 1. Effect v4 beta on Bun
 
-- Status: accepted
+- Status: superseded in part by [ADR 19](0019-effect-v4-stable.md)
 - Date: 2026-07-29
 
 ## Context
@@ -17,24 +17,27 @@ for the command tree and `@effect/platform-bun` for platform services.
 
 ## Consequences
 
-**npm's `latest` tag points at Effect v3, not v4.** A plain
-`bun update --latest` silently *downgrades* `effect` from `4.0.0-beta.x` to
-`3.22.0` and `@effect/platform-bun` to `0.91.0`. The v4 line lives under the
-`beta` dist-tag, so upgrades must be `bun add effect@beta @effect/platform-bun@beta`.
-Both packages must move together — mixing v3 and v4 fails at runtime with
-confusing iterator errors.
+**npm's `latest` tag pointed at Effect v3, not v4.** While v4 was in beta a
+plain `bun update --latest` silently *downgraded* `effect` from `4.0.0-beta.x`
+to `3.22.0` and `@effect/platform-bun` to `0.91.0`, so upgrades had to name the
+`beta` dist-tag. This no longer applies: v4.0.0 shipped and holds `latest`.
+What still applies is that both packages must move together — mixing v3 and v4
+fails at runtime with confusing iterator errors.
 
 A script outside the project directory resolves `effect` from Bun's global
 cache and can pick up a stale v3, so any scratch script importing from `src/`
 has to live inside the repo.
 
-Being on a beta means APIs move between releases. Two renames already bit us
-going from beta.33 to beta.102:
+Being on a beta meant APIs moved between releases. Two renames bit us going
+from beta.33 to beta.102:
 
 | beta.33 | beta.102 |
 | --- | --- |
 | `ServiceMap.Service` | `Context.Service` |
 | `Effect.catchAll` | `Effect.catch` (exported as `catch_ as catch`) |
+
+The move from beta.102 to 4.0.0 renamed far more, including one break that
+still typechecks. See [ADR 19](0019-effect-v4-stable.md).
 
 `Command.runWith` already strips `Terminal.QuitError` from the error channel,
 so Ctrl-C during a prompt is handled by the framework and must not be caught

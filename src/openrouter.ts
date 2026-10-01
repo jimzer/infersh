@@ -13,7 +13,7 @@
  */
 
 import { Context, Data, Effect, Layer, Option, Redacted } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { MissingKeyError, Secrets } from "./secrets.ts";
 
 const RESPONSES_URL = "https://openrouter.ai/api/v1/responses";

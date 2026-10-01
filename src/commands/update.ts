@@ -3,7 +3,7 @@
  */
 
 import { Console, Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import { emitJson, jsonFlag } from "../output.ts";
 import {
 	installPath,
@@ -28,12 +28,14 @@ to turn the check off. Running from a source checkout is never updated.`;
 export const updateCmd = Command.make(
 	"update",
 	{
-		check: Flag.boolean("check").pipe(
+		check: Flag.Boolean("check").pipe(
+			Flag.withDefault(false),
 			Flag.withDescription(
 				"Report whether a newer version exists and exit without downloading anything.",
 			),
 		),
-		force: Flag.boolean("force").pipe(
+		force: Flag.Boolean("force").pipe(
+			Flag.withDefault(false),
 			Flag.withDescription(
 				"Download and reinstall even when already on the latest version, to repair a damaged install. Still refuses to overwrite a source checkout.",
 			),

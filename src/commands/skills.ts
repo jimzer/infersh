@@ -4,7 +4,7 @@
 
 import { relative } from "node:path";
 import { Console, Effect } from "effect";
-import { Command, Flag, Prompt } from "effect/unstable/cli";
+import { Command, Flag, Prompt } from "effect/cli";
 import { emitJson, jsonFlag } from "../output.ts";
 import {
 	SKILL_FILES,
@@ -46,7 +46,7 @@ const resolveClaudeDir = (
 				}
 				return target.claudeDir;
 			}
-			const ok = yield* Prompt.confirm({
+			const ok = yield* Prompt.Confirm({
 				message: `No .claude directory here. Create ${display(target.claudeDir)}?`,
 				initial: true,
 			}).pipe(Effect.orElseSucceed(() => false));
@@ -60,7 +60,7 @@ const resolveClaudeDir = (
 			);
 			return target.ancestor;
 		}
-		const choice = yield* Prompt.select({
+		const choice = yield* Prompt.Select({
 			message: "No .claude here, but a project was found further up",
 			choices: [
 				{
@@ -81,17 +81,20 @@ const resolveClaudeDir = (
 const addCmd = Command.make(
 	"add",
 	{
-		force: Flag.boolean("force").pipe(
+		force: Flag.Boolean("force").pipe(
+			Flag.withDefault(false),
 			Flag.withDescription(
 				"Overwrite skill files that already exist. Without this, existing files are left alone so local edits survive.",
 			),
 		),
-		here: Flag.boolean("here").pipe(
+		here: Flag.Boolean("here").pipe(
+			Flag.withDefault(false),
 			Flag.withDescription(
 				"Always use the current directory, creating .claude if needed, instead of an existing project found further up.",
 			),
 		),
-		yes: Flag.boolean("yes").pipe(
+		yes: Flag.Boolean("yes").pipe(
+			Flag.withDefault(false),
 			Flag.withAlias("y"),
 			Flag.withDescription(
 				"Do not ask; take the default choice. Implied when there is no terminal, so this is safe to run from a script.",

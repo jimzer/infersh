@@ -3,7 +3,7 @@
  */
 
 import { Console, Effect } from "effect";
-import { Argument, Command } from "effect/unstable/cli";
+import { Argument, Command } from "effect/cli";
 import {
 	Budget,
 	describeReport,
@@ -17,7 +17,7 @@ import { providerIds } from "../secrets.ts";
 export const budgetCmd = Command.make(
 	"budget",
 	{
-		providers: Argument.choice("provider", providerIds).pipe(
+		providers: Argument.Literals("provider", providerIds).pipe(
 			Argument.atLeast(0),
 			Argument.withDescription(
 				"Which providers to check. Omit to check every one. Repeat to check several.",

@@ -3,7 +3,7 @@
  */
 
 import { Console, Effect, Option, Redacted } from "effect";
-import { Argument, Command, Prompt } from "effect/unstable/cli";
+import { Argument, Command, Prompt } from "effect/cli";
 import { emitJson, jsonFlag } from "../output.ts";
 import {
 	mask,
@@ -41,7 +41,7 @@ const setCmd = Command.make("set", { json: jsonFlag }, (config) =>
 			}
 
 			const hint = Option.isSome(existing) ? " (stored)" : "";
-			const entered = yield* Prompt.password({
+			const entered = yield* Prompt.Password({
 				message: `${info.label} API key${hint} — ${info.url}`,
 			});
 
@@ -155,7 +155,7 @@ reported rather than treated as an error.`,
 const rmCmd = Command.make(
 	"rm",
 	{
-		provider: Argument.choice("provider", providerIds).pipe(
+		provider: Argument.Literals("provider", providerIds).pipe(
 			Argument.withDescription(
 				"Which provider's key to delete. Only the stored key is removed; an environment variable of the same name is untouched.",
 			),

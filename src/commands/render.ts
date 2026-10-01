@@ -4,7 +4,7 @@
 
 import { resolve } from "node:path";
 import { Console, Effect, Option } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/cli";
 import { emitJson, jsonFlag } from "../output.ts";
 import {
 	CODECS,
@@ -87,32 +87,33 @@ const resolveProps = (
 	});
 
 const sharedFlags = {
-	props: Flag.string("props").pipe(
+	props: Flag.String("props").pipe(
 		Flag.withMetavar("json|path"),
 		Flag.optional,
 		Flag.withDescription(PROPS_NOTE),
 	),
-	assets: Flag.string("assets").pipe(
+	assets: Flag.String("assets").pipe(
 		Flag.withMetavar("dir"),
 		Flag.optional,
 		Flag.withDescription(
 			"Directory holding local images, fonts and other files the composition references by relative URL. Served straight from disk by request interception, so nothing is copied and no server is started.",
 		),
 	),
-	head: Flag.string("head").pipe(
+	head: Flag.String("head").pipe(
 		Flag.withMetavar("html"),
 		Flag.optional,
 		Flag.withDescription(
 			"Extra HTML injected into <head>, e.g. a <style> block or a font <link>.",
 		),
 	),
-	noTailwind: Flag.boolean("no-tailwind").pipe(
+	noTailwind: Flag.Boolean("no-tailwind").pipe(
+		Flag.withDefault(false),
 		Flag.withDescription(
 			"Skip the Tailwind CDN script. Tailwind is injected by default, which requires network access; disable it for fully offline renders.",
 		),
 	),
 	json: jsonFlag,
-	wait: Flag.choice("wait", WAIT_EVENTS).pipe(
+	wait: Flag.Literals("wait", WAIT_EVENTS).pipe(
 		Flag.optional,
 		Flag.withDescription(
 			"How long to wait before capturing: load, domcontentloaded, or networkidle. Defaults to networkidle, which waits for fonts and images to settle.",
@@ -125,11 +126,11 @@ const sharedFlags = {
 const imageCmd = Command.make(
 	"image",
 	{
-		composition: Argument.string("composition").pipe(
+		composition: Argument.String("composition").pipe(
 			Argument.optional,
 			Argument.withDescription(COMPOSITION_NOTE),
 		),
-		output: Flag.string("output").pipe(
+		output: Flag.String("output").pipe(
 			Flag.withAlias("o"),
 			Flag.withMetavar("path"),
 			Flag.optional,
@@ -137,36 +138,38 @@ const imageCmd = Command.make(
 				"Where to write the image. The extension picks the format: .png, .jpg or .webp. Defaults to out/image.png.",
 			),
 		),
-		width: Flag.integer("width").pipe(
+		width: Flag.Int("width").pipe(
 			Flag.withMetavar("px"),
 			Flag.optional,
 			Flag.withDescription("Viewport width in pixels. Defaults to 1280."),
 		),
-		height: Flag.integer("height").pipe(
+		height: Flag.Int("height").pipe(
 			Flag.withMetavar("px"),
 			Flag.optional,
 			Flag.withDescription(
 				"Viewport height in pixels. Omit to let the content decide its own height.",
 			),
 		),
-		noFullPage: Flag.boolean("no-full-page").pipe(
+		noFullPage: Flag.Boolean("no-full-page").pipe(
+			Flag.withDefault(false),
 			Flag.withDescription(
 				"Capture only the viewport instead of the whole scrollable page.",
 			),
 		),
-		scale: Flag.float("scale").pipe(
+		scale: Flag.Finite("scale").pipe(
 			Flag.withMetavar("n"),
 			Flag.optional,
 			Flag.withDescription(
 				"Device pixel ratio. 2 renders at retina resolution, doubling the pixel dimensions. Defaults to 1.",
 			),
 		),
-		quality: Flag.integer("quality").pipe(
+		quality: Flag.Int("quality").pipe(
 			Flag.withMetavar("0-100"),
 			Flag.optional,
 			Flag.withDescription("JPEG quality. Ignored for png and webp output."),
 		),
-		transparent: Flag.boolean("transparent").pipe(
+		transparent: Flag.Boolean("transparent").pipe(
+			Flag.withDefault(false),
 			Flag.withDescription(
 				"Render with a transparent background instead of white. Only meaningful for png and webp.",
 			),
@@ -251,11 +254,11 @@ Requires Google Chrome or Chromium; set CHROME_PATH to choose one.`,
 const pdfCmd = Command.make(
 	"pdf",
 	{
-		composition: Argument.string("composition").pipe(
+		composition: Argument.String("composition").pipe(
 			Argument.optional,
 			Argument.withDescription(COMPOSITION_NOTE),
 		),
-		output: Flag.string("output").pipe(
+		output: Flag.String("output").pipe(
 			Flag.withAlias("o"),
 			Flag.withMetavar("path"),
 			Flag.optional,
@@ -263,37 +266,38 @@ const pdfCmd = Command.make(
 				"Where to write the PDF. Defaults to out/document.pdf.",
 			),
 		),
-		format: Flag.choice("format", PAPER_FORMATS).pipe(
+		format: Flag.Literals("format", PAPER_FORMATS).pipe(
 			Flag.optional,
 			Flag.withDescription(
 				"Paper size. Defaults to a4. Ignored when --width and --height are given.",
 			),
 		),
-		width: Flag.string("width").pipe(
+		width: Flag.String("width").pipe(
 			Flag.withMetavar("size"),
 			Flag.optional,
 			Flag.withDescription(
 				"Custom page width with a CSS unit, e.g. 210mm. Must be paired with --height.",
 			),
 		),
-		height: Flag.string("height").pipe(
+		height: Flag.String("height").pipe(
 			Flag.withMetavar("size"),
 			Flag.optional,
 			Flag.withDescription(
 				"Custom page height with a CSS unit, e.g. 297mm. Must be paired with --width.",
 			),
 		),
-		margin: Flag.string("margin").pipe(
+		margin: Flag.String("margin").pipe(
 			Flag.withMetavar("size"),
 			Flag.optional,
 			Flag.withDescription(
 				"Margin on all four sides, e.g. 1cm or 0.5in. Defaults to none.",
 			),
 		),
-		landscape: Flag.boolean("landscape").pipe(
+		landscape: Flag.Boolean("landscape").pipe(
+			Flag.withDefault(false),
 			Flag.withDescription("Use landscape orientation instead of portrait."),
 		),
-		scale: Flag.float("scale").pipe(
+		scale: Flag.Finite("scale").pipe(
 			Flag.withMetavar("0.1-2"),
 			Flag.optional,
 			Flag.withDescription("Scale the rendered content. Defaults to 1."),
@@ -386,11 +390,11 @@ Requires Google Chrome or Chromium; set CHROME_PATH to choose one.`,
 const videoCmd = Command.make(
 	"video",
 	{
-		composition: Argument.string("composition").pipe(
+		composition: Argument.String("composition").pipe(
 			Argument.optional,
 			Argument.withDescription(COMPOSITION_NOTE),
 		),
-		output: Flag.string("output").pipe(
+		output: Flag.String("output").pipe(
 			Flag.withAlias("o"),
 			Flag.withMetavar("path"),
 			Flag.optional,
@@ -398,91 +402,92 @@ const videoCmd = Command.make(
 				"Where to write the video. Defaults to out/video.mp4.",
 			),
 		),
-		width: Flag.integer("width").pipe(
+		width: Flag.Int("width").pipe(
 			Flag.withMetavar("px"),
 			Flag.optional,
 			Flag.withDescription(
 				"Frame width. Overrides the composition's own config; defaults to 1920.",
 			),
 		),
-		height: Flag.integer("height").pipe(
+		height: Flag.Int("height").pipe(
 			Flag.withMetavar("px"),
 			Flag.optional,
 			Flag.withDescription(
 				"Frame height. Overrides the composition's own config; defaults to 1080.",
 			),
 		),
-		fps: Flag.integer("fps").pipe(
+		fps: Flag.Int("fps").pipe(
 			Flag.withMetavar("n"),
 			Flag.optional,
 			Flag.withDescription(
 				"Frames per second. Overrides the composition's own config; defaults to 30.",
 			),
 		),
-		duration: Flag.integer("duration").pipe(
+		duration: Flag.Int("duration").pipe(
 			Flag.withMetavar("frames"),
 			Flag.optional,
 			Flag.withDescription(
 				"Length in frames, not seconds — at 30fps, 150 is five seconds. Overrides the composition's own config.",
 			),
 		),
-		codec: Flag.choice("codec", CODECS).pipe(
+		codec: Flag.Literals("codec", CODECS).pipe(
 			Flag.optional,
 			Flag.withDescription(
 				"Output codec. Defaults to h264. Use prores for editing, gif for a looping animation, or mp3/aac/wav to extract audio only.",
 			),
 		),
-		from: Flag.integer("from").pipe(
+		from: Flag.Int("from").pipe(
 			Flag.withMetavar("frame"),
 			Flag.optional,
 			Flag.withDescription(
 				"First frame to render, for previewing part of a long composition.",
 			),
 		),
-		to: Flag.integer("to").pipe(
+		to: Flag.Int("to").pipe(
 			Flag.withMetavar("frame"),
 			Flag.optional,
 			Flag.withDescription("Last frame to render, inclusive."),
 		),
-		concurrency: Flag.integer("concurrency").pipe(
+		concurrency: Flag.Int("concurrency").pipe(
 			Flag.withMetavar("n"),
 			Flag.optional,
 			Flag.withDescription(
 				"How many browser tabs render frames in parallel. Defaults to a value derived from the CPU count; lower it if memory is tight.",
 			),
 		),
-		crf: Flag.integer("crf").pipe(
+		crf: Flag.Int("crf").pipe(
 			Flag.withMetavar("n"),
 			Flag.optional,
 			Flag.withDescription(
 				"Constant rate factor — lower is better quality and a bigger file. Roughly 1-51 for h264, where 18 is visually near-lossless.",
 			),
 		),
-		scale: Flag.float("scale").pipe(
+		scale: Flag.Finite("scale").pipe(
 			Flag.withMetavar("n"),
 			Flag.optional,
 			Flag.withDescription(
 				"Multiply the frame dimensions, e.g. 2 to render 1920x1080 at 3840x2160.",
 			),
 		),
-		muted: Flag.boolean("muted").pipe(
+		muted: Flag.Boolean("muted").pipe(
+			Flag.withDefault(false),
 			Flag.withDescription("Drop the audio track from the output."),
 		),
-		frame: Flag.integer("frame").pipe(
+		frame: Flag.Int("frame").pipe(
 			Flag.withMetavar("n"),
 			Flag.optional,
 			Flag.withDescription(
 				"Render just this one frame as a still image instead of encoding a video. Nothing is encoded, so it is far faster than a full render — the quick way to check a composition looks right at a given moment before committing to the whole thing. The output extension picks the format (.png or .jpeg); defaults to out/frame.png.",
 			),
 		),
-		assets: Flag.string("assets").pipe(
+		assets: Flag.String("assets").pipe(
 			Flag.withMetavar("dir"),
 			Flag.optional,
 			Flag.withDescription(
 				"Directory of local files the composition loads with staticFile(). Symlinked rather than copied, so a large folder costs nothing. Note this differs from image and pdf, which resolve plain relative URLs.",
 			),
 		),
-		props: Flag.string("props").pipe(
+		props: Flag.String("props").pipe(
 			Flag.withMetavar("json|path"),
 			Flag.optional,
 			Flag.withDescription(PROPS_NOTE),

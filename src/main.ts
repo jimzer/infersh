@@ -2,8 +2,8 @@
 
 import { BunServices } from "@effect/platform-bun";
 import { Console, Effect, Layer } from "effect";
-import { Command } from "effect/unstable/cli";
-import { FetchHttpClient } from "effect/unstable/http";
+import { Command } from "effect/cli";
+import { FetchHttpClient } from "effect/http";
 import { runUpdateCheck } from "./autoupdate.ts";
 import * as Bdata from "./bdata.ts";
 import * as Budget from "./budget.ts";

@@ -3,7 +3,7 @@
  */
 
 import { Console, Effect, Option } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import {
 	GRANULARITIES,
 	Groq,
@@ -39,54 +39,54 @@ Requires a Groq API key: run \`infer keys set\` or set GROQ_API_KEY.`;
 const transcribeCmd = Command.make(
 	"transcribe",
 	{
-		file: Flag.string("file").pipe(
+		file: Flag.String("file").pipe(
 			Flag.withMetavar("path"),
 			Flag.optional,
 			Flag.withDescription(
 				"Local audio or video file to transcribe. Required unless --url is given. Preprocessed with ffmpeg unless --no-optimize is set.",
 			),
 		),
-		url: Flag.string("url").pipe(
+		url: Flag.String("url").pipe(
 			Flag.withMetavar("url"),
 			Flag.optional,
 			Flag.withDescription(
 				"Publicly reachable audio URL to transcribe instead of uploading. The only way to handle files over 25 MB; never preprocessed, since the file is never downloaded locally.",
 			),
 		),
-		model: Flag.choice("model", MODELS).pipe(
+		model: Flag.Literals("model", MODELS).pipe(
 			Flag.optional,
 			Flag.withDescription(
 				"Whisper model to use. Defaults to whisper-large-v3-turbo, the cheapest and fastest; whisper-large-v3 is more accurate.",
 			),
 		),
-		language: Flag.string("language").pipe(
+		language: Flag.String("language").pipe(
 			Flag.withMetavar("code"),
 			Flag.optional,
 			Flag.withDescription(
 				"ISO-639-1 code of the spoken language, e.g. en or fr. Supplying it improves both accuracy and latency; omit it to auto-detect.",
 			),
 		),
-		prompt: Flag.string("prompt").pipe(
+		prompt: Flag.String("prompt").pipe(
 			Flag.withMetavar("text"),
 			Flag.optional,
 			Flag.withDescription(
 				"Style and context hint, max 224 tokens — the topic, or spellings of names and jargon. Guides wording only; it cannot issue instructions. Write it in the same language as the audio.",
 			),
 		),
-		responseFormat: Flag.choice("response-format", RESPONSE_FORMATS).pipe(
+		responseFormat: Flag.Literals("response-format", RESPONSE_FORMATS).pipe(
 			Flag.optional,
 			Flag.withDescription(
 				"json for the text plus metadata, text for bare text, verbose_json to also get per-segment timestamps and quality scores. Defaults to json.",
 			),
 		),
-		temperature: Flag.float("temperature").pipe(
+		temperature: Flag.Finite("temperature").pipe(
 			Flag.withMetavar("0-1"),
 			Flag.optional,
 			Flag.withDescription(
 				"Sampling temperature. 0, the default, is recommended for transcription.",
 			),
 		),
-		timestampGranularities: Flag.choice(
+		timestampGranularities: Flag.Literals(
 			"timestamp-granularities",
 			GRANULARITIES,
 		).pipe(
@@ -96,7 +96,8 @@ const transcribeCmd = Command.make(
 			),
 		),
 		json: jsonFlag,
-		noOptimize: Flag.boolean("no-optimize").pipe(
+		noOptimize: Flag.Boolean("no-optimize").pipe(
+			Flag.withDefault(false),
 			Flag.withDescription(
 				"Upload the file exactly as-is, skipping the ffmpeg 16 kHz mono FLAC conversion. Use when the file is already prepared, or when ffmpeg is unavailable.",
 			),

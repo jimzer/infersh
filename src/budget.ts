@@ -19,7 +19,7 @@
  */
 
 import { Context, Effect, Layer, Option, Redacted } from "effect";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 import {
 	type ProviderId,
 	providerIds,

@@ -4,7 +4,7 @@
 
 import { readFileSync } from "node:fs";
 import { Console, Effect, Option } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/cli";
 import {
 	formatContext,
 	formatPrice,
@@ -35,53 +35,54 @@ const readSchema = (raw: string): Effect.Effect<unknown, OpenRouterError> =>
 const responseCmd = Command.make(
 	"response",
 	{
-		model: Argument.string("model").pipe(
+		model: Argument.String("model").pipe(
 			Argument.withDescription(
 				"Which model to run, as an OpenRouter slug such as anthropic/claude-sonnet-5 or x-ai/grok-4.5. Browse them at https://openrouter.ai/models.",
 			),
 		),
-		prompt: Flag.string("prompt").pipe(
+		prompt: Flag.String("prompt").pipe(
 			Flag.withMetavar("text"),
 			Flag.withDescription(
 				"The prompt to send. Required. The endpoint is stateless, so this is the whole conversation.",
 			),
 		),
-		schema: Flag.string("schema").pipe(
+		schema: Flag.String("schema").pipe(
 			Flag.withMetavar("json"),
 			Flag.optional,
 			Flag.withDescription(
 				'A JSON Schema the answer must match, inline or as @path/to/schema.json. The top level must be {"type":"object"}. When set, stdout is the JSON object itself, so it pipes straight into jq.',
 			),
 		),
-		schemaName: Flag.string("schema-name").pipe(
+		schemaName: Flag.String("schema-name").pipe(
 			Flag.withMetavar("name"),
 			Flag.optional,
 			Flag.withDescription(
 				"Name reported to the provider alongside --schema. Cosmetic; defaults to `output`.",
 			),
 		),
-		instructions: Flag.string("instructions").pipe(
+		instructions: Flag.String("instructions").pipe(
 			Flag.withMetavar("text"),
 			Flag.optional,
 			Flag.withDescription(
 				"System-level instructions applied ahead of the prompt, for setting a role or output style.",
 			),
 		),
-		maxTokens: Flag.integer("max-tokens").pipe(
+		maxTokens: Flag.Int("max-tokens").pipe(
 			Flag.withMetavar("n"),
 			Flag.optional,
 			Flag.withDescription(
 				"Cap on tokens generated. Reasoning models spend these before writing an answer, so allow headroom or the reply may be cut short.",
 			),
 		),
-		temperature: Flag.float("temperature").pipe(
+		temperature: Flag.Finite("temperature").pipe(
 			Flag.withMetavar("n"),
 			Flag.optional,
 			Flag.withDescription(
 				"Sampling temperature. Lower is more deterministic; omit to use the model's own default.",
 			),
 		),
-		reasoning: Flag.boolean("reasoning").pipe(
+		reasoning: Flag.Boolean("reasoning").pipe(
+			Flag.withDefault(false),
 			Flag.withDescription(
 				"Also print the model's reasoning block to stderr, when it produced one.",
 			),
@@ -180,49 +181,49 @@ OPENROUTER_API_KEY. Check the balance with \`infer budget openrouter\`.`,
 const modelsCmd = Command.make(
 	"models",
 	{
-		query: Flag.string("q").pipe(
+		query: Flag.String("q").pipe(
 			Flag.withMetavar("text"),
 			Flag.optional,
 			Flag.withDescription(
 				"Free-text search across model id, name and description.",
 			),
 		),
-		author: Flag.string("author").pipe(
+		author: Flag.String("author").pipe(
 			Flag.withMetavar("name"),
 			Flag.optional,
 			Flag.withDescription(
 				"Only models from this author, matching the part before the slash: anthropic, openai, x-ai, google.",
 			),
 		),
-		category: Flag.string("category").pipe(
+		category: Flag.String("category").pipe(
 			Flag.withMetavar("name"),
 			Flag.optional,
 			Flag.withDescription(
 				"Restrict to one of OpenRouter's categories, e.g. programming.",
 			),
 		),
-		supports: Flag.string("supports").pipe(
+		supports: Flag.String("supports").pipe(
 			Flag.withMetavar("param"),
 			Flag.optional,
 			Flag.withDescription(
 				"Only models supporting a parameter, e.g. structured_outputs, tools, reasoning. Use this to find models that work with `response --schema`.",
 			),
 		),
-		maxPrice: Flag.float("max-price").pipe(
+		maxPrice: Flag.Finite("max-price").pipe(
 			Flag.withMetavar("usd"),
 			Flag.optional,
 			Flag.withDescription(
 				"Only models at or below this input price, in USD per million tokens.",
 			),
 		),
-		minContext: Flag.integer("min-context").pipe(
+		minContext: Flag.Int("min-context").pipe(
 			Flag.withMetavar("tokens"),
 			Flag.optional,
 			Flag.withDescription(
 				"Only models whose context window is at least this many tokens.",
 			),
 		),
-		limit: Flag.integer("limit").pipe(
+		limit: Flag.Int("limit").pipe(
 			Flag.withMetavar("n"),
 			Flag.optional,
 			Flag.withDescription(
@@ -300,7 +301,7 @@ Needs no API key.`,
 const endpointsCmd = Command.make(
 	"endpoints",
 	{
-		model: Argument.string("model").pipe(
+		model: Argument.String("model").pipe(
 			Argument.withDescription(
 				"The model to inspect, as author/name. Find one with `infer openrouter models`.",
 			),

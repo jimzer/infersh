@@ -8,9 +8,10 @@
  */
 
 import { Console, type Effect } from "effect";
-import { Flag } from "effect/unstable/cli";
+import { Flag } from "effect/cli";
 
-export const jsonFlag = Flag.boolean("json").pipe(
+export const jsonFlag = Flag.Boolean("json").pipe(
+	Flag.withDefault(false),
 	Flag.withDescription(
 		"Print the result as a single JSON value on stdout. Payloads that are not already JSON are wrapped in an object, so output is machine-readable the same way for every command.",
 	),

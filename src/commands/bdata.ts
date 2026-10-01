@@ -3,7 +3,7 @@
  */
 
 import { Console, Effect, Option } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/cli";
 import {
 	Bdata,
 	BdataError,
@@ -66,51 +66,51 @@ const INPUT_NOTE =
 
 // Flags shared by both subcommands, mirroring the SDK's base option schema.
 const baseFlags = {
-	format: Flag.choice("format", FORMATS).pipe(
+	format: Flag.Literals("format", FORMATS).pipe(
 		Flag.optional,
 		Flag.withDescription(
 			"raw (default) returns the page or results as text; json returns a structured object worth piping into jq.",
 		),
 	),
-	dataFormat: Flag.choice("data-format", DATA_FORMATS).pipe(
+	dataFormat: Flag.Literals("data-format", DATA_FORMATS).pipe(
 		Flag.optional,
 		Flag.withDescription(
 			"Shape of the returned content: html (default), markdown (md is an alias) for LLM-friendly text, or screenshot for a PNG.",
 		),
 	),
-	country: Flag.string("country").pipe(
+	country: Flag.String("country").pipe(
 		Flag.withMetavar("cc"),
 		Flag.optional,
 		Flag.withDescription(
 			"Two-letter ISO 3166-1 country code to route the request through, e.g. gb or us. Changes geo-targeted results.",
 		),
 	),
-	method: Flag.choice("method", METHODS).pipe(
+	method: Flag.Literals("method", METHODS).pipe(
 		Flag.optional,
 		Flag.withDescription("HTTP method for the request. Defaults to GET."),
 	),
-	zone: Flag.string("zone").pipe(
+	zone: Flag.String("zone").pipe(
 		Flag.withMetavar("name"),
 		Flag.optional,
 		Flag.withDescription(
 			"Bright Data zone to bill against. Created automatically when omitted.",
 		),
 	),
-	concurrency: Flag.integer("concurrency").pipe(
+	concurrency: Flag.Int("concurrency").pipe(
 		Flag.withMetavar("1-50"),
 		Flag.optional,
 		Flag.withDescription(
 			"How many of a batch to process in parallel. Defaults to 10; only matters when passing several targets.",
 		),
 	),
-	timeout: Flag.integer("timeout").pipe(
+	timeout: Flag.Int("timeout").pipe(
 		Flag.withMetavar("ms"),
 		Flag.optional,
 		Flag.withDescription(
 			"Per-request timeout in milliseconds, between 250 and 300000. Defaults to 120000.",
 		),
 	),
-	input: Flag.string("input").pipe(
+	input: Flag.String("input").pipe(
 		Flag.withMetavar("json"),
 		Flag.optional,
 		Flag.withDescription(INPUT_NOTE),
@@ -156,7 +156,7 @@ const resolveOptions = <A extends object>(
  * A profile or a subreddit has no natural end and each collected record is
  * billed, so the cap is required rather than defaulted (`docs/adrs/0011`).
  */
-const limitFlag = Flag.integer("limit").pipe(
+const limitFlag = Flag.Int("limit").pipe(
 	Flag.withMetavar("n"),
 	Flag.withDescription(
 		"Required. Maximum records to collect per input. Discovery is otherwise unbounded and every record is billed, so the cap has to be stated rather than defaulted.",
@@ -164,14 +164,14 @@ const limitFlag = Flag.integer("limit").pipe(
 );
 
 const dateWindowFlags = {
-	startDate: Flag.string("start-date").pipe(
+	startDate: Flag.String("start-date").pipe(
 		Flag.withMetavar("date"),
 		Flag.optional,
 		Flag.withDescription(
 			"Only include posts published on or after this date, e.g. 2026-08-01.",
 		),
 	),
-	endDate: Flag.string("end-date").pipe(
+	endDate: Flag.String("end-date").pipe(
 		Flag.withMetavar("date"),
 		Flag.optional,
 		Flag.withDescription(
@@ -190,7 +190,7 @@ const requirePositive = (limit: number, flag: string) =>
 const scrapeCmd = Command.make(
 	"scrape",
 	{
-		urls: Argument.string("url").pipe(
+		urls: Argument.String("url").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"One or more URLs to scrape. Several URLs are fetched in parallel and returned as an array, in the order given.",
@@ -258,29 +258,29 @@ BRIGHTDATA_API_KEY.`,
 const searchCmd = Command.make(
 	"search",
 	{
-		queries: Argument.string("query").pipe(
+		queries: Argument.String("query").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"One or more search queries. Several queries are run in parallel and returned as an array, in the order given.",
 			),
 		),
-		engine: Flag.choice("engine", SEARCH_ENGINES).pipe(
+		engine: Flag.Literals("engine", SEARCH_ENGINES).pipe(
 			Flag.optional,
 			Flag.withDescription("Search engine to query. Defaults to google."),
 		),
-		language: Flag.string("language").pipe(
+		language: Flag.String("language").pipe(
 			Flag.withMetavar("code"),
 			Flag.optional,
 			Flag.withDescription(
 				"Language code for the results, e.g. en or pt-BR. Two to five characters.",
 			),
 		),
-		numResults: Flag.integer("num-results").pipe(
+		numResults: Flag.Int("num-results").pipe(
 			Flag.withMetavar("1-100"),
 			Flag.optional,
 			Flag.withDescription("How many results to return. Defaults to 10."),
 		),
-		start: Flag.integer("start").pipe(
+		start: Flag.Int("start").pipe(
 			Flag.withMetavar("n"),
 			Flag.optional,
 			Flag.withDescription(
@@ -344,20 +344,20 @@ BRIGHTDATA_API_KEY.`,
 const videoCmd = Command.make(
 	"video",
 	{
-		urls: Argument.string("url").pipe(
+		urls: Argument.String("url").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"One or more YouTube video URLs. All are collected in a single request.",
 			),
 		),
-		country: Flag.string("country").pipe(
+		country: Flag.String("country").pipe(
 			Flag.withMetavar("cc"),
 			Flag.optional,
 			Flag.withDescription(
 				"Two-letter country code to fetch from, affecting availability and localised fields.",
 			),
 		),
-		transcriptionLanguage: Flag.string("transcription-language").pipe(
+		transcriptionLanguage: Flag.String("transcription-language").pipe(
 			Flag.withMetavar("lang"),
 			Flag.optional,
 			Flag.withDescription(
@@ -415,33 +415,33 @@ pure JSON.`,
 const discoverCmd = Command.make(
 	"discover",
 	{
-		keywords: Argument.string("keyword").pipe(
+		keywords: Argument.String("keyword").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"One or more search keywords. Each is discovered independently.",
 			),
 		),
-		numOfPosts: Flag.integer("num-of-posts").pipe(
+		numOfPosts: Flag.Int("num-of-posts").pipe(
 			Flag.withMetavar("n"),
 			Flag.withDescription(
 				"Required. Maximum videos to collect per keyword. Every collected video is billed, and the API treats an absent limit as unlimited, so this must be stated rather than defaulted.",
 			),
 		),
-		startDate: Flag.string("start-date").pipe(
+		startDate: Flag.String("start-date").pipe(
 			Flag.withMetavar("date"),
 			Flag.optional,
 			Flag.withDescription(
 				"Only include videos published on or after this date, e.g. 2026-01-01.",
 			),
 		),
-		endDate: Flag.string("end-date").pipe(
+		endDate: Flag.String("end-date").pipe(
 			Flag.withMetavar("date"),
 			Flag.optional,
 			Flag.withDescription(
 				"Only include videos published on or before this date.",
 			),
 		),
-		country: Flag.string("country").pipe(
+		country: Flag.String("country").pipe(
 			Flag.withMetavar("cc"),
 			Flag.optional,
 			Flag.withDescription(
@@ -516,7 +516,7 @@ every 10 seconds for up to 10 minutes, with progress on stderr.`,
 const youtubeCommentsCmd = Command.make(
 	"comments",
 	{
-		urls: Argument.string("video-url").pipe(
+		urls: Argument.String("video-url").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"One or more YouTube video URLs whose comments should be collected.",
@@ -574,7 +574,7 @@ return the same record shape, so their output is interchangeable.`,
 const xPostCmd = Command.make(
 	"post",
 	{
-		urls: Argument.string("url").pipe(
+		urls: Argument.String("url").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"One or more X post URLs, e.g. https://x.com/OpenAI/status/123. All are collected in a single request.",
@@ -623,7 +623,7 @@ as content.`,
 const xProfileCmd = Command.make(
 	"profile",
 	{
-		urls: Argument.string("profile-url").pipe(
+		urls: Argument.String("profile-url").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"One or more X profile URLs, e.g. https://x.com/OpenAI. Each is discovered separately, so --limit applies to each.",
@@ -704,7 +704,7 @@ then feed the /status/ URLs it returns into \`x post\`.`,
 const redditPostCmd = Command.make(
 	"post",
 	{
-		urls: Argument.string("url").pipe(
+		urls: Argument.String("url").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"One or more Reddit post URLs. All are collected in a single request.",
@@ -747,21 +747,21 @@ rather than failing the call.`,
 const redditCommentsCmd = Command.make(
 	"comments",
 	{
-		urls: Argument.string("post-url").pipe(
+		urls: Argument.String("post-url").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"One or more Reddit post URLs whose comments should be collected.",
 			),
 		),
 		limit: limitFlag,
-		daysBack: Flag.integer("days-back").pipe(
+		daysBack: Flag.Int("days-back").pipe(
 			Flag.withMetavar("n"),
 			Flag.optional,
 			Flag.withDescription(
 				"Only include comments from the last n days. Narrows a long thread by age rather than by count.",
 			),
 		),
-		sort: Flag.choice("sort", REDDIT_SORTS).pipe(
+		sort: Flag.Literals("sort", REDDIT_SORTS).pipe(
 			Flag.optional,
 			Flag.withDescription(
 				"Comment ordering. Which comments --limit keeps depends on this.",
@@ -815,19 +815,19 @@ stated. Combine with --sort to choose which ones you get.`,
 const redditSearchCmd = Command.make(
 	"search",
 	{
-		keywords: Argument.string("keyword").pipe(
+		keywords: Argument.String("keyword").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"One or more search keywords. Each is discovered independently.",
 			),
 		),
-		numOfPosts: Flag.integer("num-of-posts").pipe(
+		numOfPosts: Flag.Int("num-of-posts").pipe(
 			Flag.withMetavar("n"),
 			Flag.withDescription(
 				"Required. Maximum posts to collect per keyword. Every collected post is billed and an absent limit means unlimited, so this must be stated.",
 			),
 		),
-		date: Flag.choice("date", REDDIT_DATES).pipe(
+		date: Flag.Literals("date", REDDIT_DATES).pipe(
 			Flag.optional,
 			Flag.withDescription(
 				"How far back to search. Omit to let Reddit choose its default window.",
@@ -880,14 +880,14 @@ as a server-side cap on the job.`,
 const redditSubredditCmd = Command.make(
 	"subreddit",
 	{
-		urls: Argument.string("subreddit-url").pipe(
+		urls: Argument.String("subreddit-url").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"One or more subreddit URLs, e.g. https://www.reddit.com/r/typescript/.",
 			),
 		),
 		limit: limitFlag,
-		sort: Flag.choice("sort", REDDIT_SORTS).pipe(
+		sort: Flag.Literals("sort", REDDIT_SORTS).pipe(
 			Flag.optional,
 			Flag.withDescription(
 				"Which listing to read: Hot, New, Top or Rising. Decides which posts --limit keeps.",
@@ -967,32 +967,34 @@ actual discussion is.`,
 const chatgptCmd = Command.make(
 	"chatgpt",
 	{
-		prompts: Argument.string("prompt").pipe(
+		prompts: Argument.String("prompt").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"One or more prompts, up to 4096 characters each. Every prompt is asked independently.",
 			),
 		),
-		country: Flag.string("country").pipe(
+		country: Flag.String("country").pipe(
 			Flag.withMetavar("cc"),
 			Flag.optional,
 			Flag.withDescription(
 				"Two-letter country code to ask from. Answers differ by market, so this is how you compare them.",
 			),
 		),
-		followUp: Flag.string("follow-up").pipe(
+		followUp: Flag.String("follow-up").pipe(
 			Flag.withMetavar("text"),
 			Flag.optional,
 			Flag.withDescription(
 				"A clarifying question asked after the first answer, in the same conversation.",
 			),
 		),
-		noWebSearch: Flag.boolean("no-web-search").pipe(
+		noWebSearch: Flag.Boolean("no-web-search").pipe(
+			Flag.withDefault(false),
 			Flag.withDescription(
 				"Answer from the model alone. Web search is on by default, and is what produces citations.",
 			),
 		),
-		requireSources: Flag.boolean("require-sources").pipe(
+		requireSources: Flag.Boolean("require-sources").pipe(
+			Flag.withDefault(false),
 			Flag.withDescription(
 				"Fail the row rather than return an answer with no sources. Worth setting when you intend to fetch the citations.",
 			),
@@ -1055,7 +1057,7 @@ Web search is on by default and is what produces citations; add
 const linkedinCompanyCmd = Command.make(
 	"company",
 	{
-		urls: Argument.string("company-url").pipe(
+		urls: Argument.String("company-url").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"One or more LinkedIn company URLs, e.g. https://www.linkedin.com/company/bright-data.",
@@ -1096,7 +1098,7 @@ No limit flag: the number of URLs you pass is the limit.`,
 const linkedinProfileCmd = Command.make(
 	"profile",
 	{
-		urls: Argument.string("profile-url").pipe(
+		urls: Argument.String("profile-url").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"One or more LinkedIn people URLs, e.g. https://www.linkedin.com/in/username.",
@@ -1138,7 +1140,7 @@ storing it.`,
 const linkedinPostsCmd = Command.make(
 	"posts",
 	{
-		urls: Argument.string("url").pipe(
+		urls: Argument.String("url").pipe(
 			Argument.atLeast(1),
 			Argument.withDescription(
 				"LinkedIn company URLs (/company/...) or people URLs (/in/...). All must be the same kind, since each uses a different discovery route.",
@@ -1146,7 +1148,8 @@ const linkedinPostsCmd = Command.make(
 		),
 		limit: limitFlag,
 		...dateWindowFlags,
-		authoredOnly: Flag.boolean("authored-only").pipe(
+		authoredOnly: Flag.Boolean("authored-only").pipe(
+			Flag.withDefault(false),
 			Flag.withDescription(
 				"People URLs only: drop reshares, keeping what the person actually wrote.",
 			),
@@ -1225,50 +1228,50 @@ is usually what you want when judging what someone actually thinks.`,
 const linkedinJobsCmd = Command.make(
 	"jobs",
 	{
-		location: Flag.string("location").pipe(
+		location: Flag.String("location").pipe(
 			Flag.withMetavar("place"),
 			Flag.withDescription(
 				"Required. Where to search, e.g. Berlin or United States. The API requires a place even when a keyword is given.",
 			),
 		),
 		limit: limitFlag,
-		keyword: Flag.string("keyword").pipe(
+		keyword: Flag.String("keyword").pipe(
 			Flag.withMetavar("text"),
 			Flag.optional,
 			Flag.withDescription(
 				'Job title or role. Quote a phrase for an exact match, e.g. "staff engineer".',
 			),
 		),
-		country: Flag.string("country").pipe(
+		country: Flag.String("country").pipe(
 			Flag.withMetavar("cc"),
 			Flag.optional,
 			Flag.withDescription("Two-letter country code, e.g. US or FR."),
 		),
-		timeRange: Flag.string("time-range").pipe(
+		timeRange: Flag.String("time-range").pipe(
 			Flag.withMetavar("text"),
 			Flag.optional,
 			Flag.withDescription(
 				'How recently posted, e.g. "Past month" or "Past week".',
 			),
 		),
-		jobType: Flag.string("job-type").pipe(
+		jobType: Flag.String("job-type").pipe(
 			Flag.withMetavar("text"),
 			Flag.optional,
 			Flag.withDescription('Employment type, e.g. "Full-time" or "Contract".'),
 		),
-		experienceLevel: Flag.string("experience-level").pipe(
+		experienceLevel: Flag.String("experience-level").pipe(
 			Flag.withMetavar("text"),
 			Flag.optional,
 			Flag.withDescription(
 				'Career stage, e.g. "Entry level", "Mid-Senior level" or "Executive".',
 			),
 		),
-		remote: Flag.string("remote").pipe(
+		remote: Flag.String("remote").pipe(
 			Flag.withMetavar("text"),
 			Flag.optional,
 			Flag.withDescription("Work arrangement: Remote, On-site or Hybrid."),
 		),
-		company: Flag.string("company").pipe(
+		company: Flag.String("company").pipe(
 			Flag.withMetavar("name"),
 			Flag.optional,
 			Flag.withDescription("Restrict to one employer."),
@@ -1360,17 +1363,17 @@ const SNAPSHOT_ID_NOTE =
 const snapshotListCmd = Command.make(
 	"list",
 	{
-		dataset: Flag.string("dataset").pipe(
+		dataset: Flag.String("dataset").pipe(
 			Flag.withMetavar("name|id"),
 			Flag.withDescription(
 				`Required. Which dataset's jobs to list: a friendly name (${Object.keys(DATASETS).join(", ")}) or a raw gd_ id.`,
 			),
 		),
-		status: Flag.choice("status", SNAPSHOT_STATUSES).pipe(
+		status: Flag.Literals("status", SNAPSHOT_STATUSES).pipe(
 			Flag.optional,
 			Flag.withDescription("Only jobs in this state."),
 		),
-		limit: Flag.integer("limit").pipe(
+		limit: Flag.Int("limit").pipe(
 			Flag.withMetavar("n"),
 			Flag.optional,
 			Flag.withDescription("How many to return. Defaults to the API's 1000."),
@@ -1413,7 +1416,7 @@ downloading it.`,
 const snapshotStatusCmd = Command.make(
 	"status",
 	{
-		id: Argument.string("snapshot-id").pipe(
+		id: Argument.String("snapshot-id").pipe(
 			Argument.withDescription(SNAPSHOT_ID_NOTE),
 		),
 		json: jsonFlag,
@@ -1436,7 +1439,7 @@ waiting for.`,
 const snapshotGetCmd = Command.make(
 	"get",
 	{
-		id: Argument.string("snapshot-id").pipe(
+		id: Argument.String("snapshot-id").pipe(
 			Argument.withDescription(SNAPSHOT_ID_NOTE),
 		),
 		json: jsonFlag,
@@ -1470,7 +1473,7 @@ rows.`,
 const snapshotCancelCmd = Command.make(
 	"cancel",
 	{
-		id: Argument.string("snapshot-id").pipe(
+		id: Argument.String("snapshot-id").pipe(
 			Argument.withDescription(SNAPSHOT_ID_NOTE),
 		),
 		json: jsonFlag,

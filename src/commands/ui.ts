@@ -4,7 +4,7 @@
 
 import { resolve } from "node:path";
 import { Console, Effect, Option } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/cli";
 import { emitJson, jsonFlag } from "../output.ts";
 import { Ui, UiError, type UiRequest, type UiResult } from "../ui.ts";
 
@@ -39,48 +39,51 @@ const resolveData = (
 	});
 
 const sharedFlags = {
-	data: Flag.string("data").pipe(
+	data: Flag.String("data").pipe(
 		Flag.withMetavar("json|path"),
 		Flag.optional,
 		Flag.withDescription(
 			"Content for the page, as inline JSON or a path to a .json file. Reaches the page as infer.data. Keeping the content here rather than inside the .tsx is what lets one page be reused across runs.",
 		),
 	),
-	title: Flag.string("title").pipe(
+	title: Flag.String("title").pipe(
 		Flag.withMetavar("text"),
 		Flag.optional,
 		Flag.withDescription("Browser tab title. Defaults to the file name."),
 	),
-	timeout: Flag.integer("timeout").pipe(
+	timeout: Flag.Int("timeout").pipe(
 		Flag.withMetavar("seconds"),
 		Flag.optional,
 		Flag.withDescription(
 			"How long to wait before giving up. On expiry the command still exits 0 with status timeout, which means the user never answered — say so rather than assuming anything.",
 		),
 	),
-	port: Flag.integer("port").pipe(
+	port: Flag.Int("port").pipe(
 		Flag.withMetavar("n"),
 		Flag.optional,
 		Flag.withDescription(
 			"Pin the port. Defaults to a free one chosen by the OS, so parallel runs never collide.",
 		),
 	),
-	share: Flag.boolean("share").pipe(
+	share: Flag.Boolean("share").pipe(
+		Flag.withDefault(false),
 		Flag.withDescription(
 			"Publish to your tailnet over HTTPS with `tailscale serve`, so the page opens on your phone. The server itself stays on localhost. Cleared again when the command ends.",
 		),
 	),
-	open: Flag.boolean("open").pipe(
+	open: Flag.Boolean("open").pipe(
+		Flag.withDefault(false),
 		Flag.withDescription(
 			"Open the URL in the local browser as well as printing it.",
 		),
 	),
-	noTailwind: Flag.boolean("no-tailwind").pipe(
+	noTailwind: Flag.Boolean("no-tailwind").pipe(
+		Flag.withDefault(false),
 		Flag.withDescription(
 			"Skip the Tailwind CDN script. Tailwind is injected by default, so a page can be styled with class names alone.",
 		),
 	),
-	head: Flag.string("head").pipe(
+	head: Flag.String("head").pipe(
 		Flag.withMetavar("html"),
 		Flag.optional,
 		Flag.withDescription(
@@ -142,7 +145,7 @@ const runPage = (
 const askCmd = Command.make(
 	"ask",
 	{
-		app: Argument.string("app.tsx").pipe(Argument.withDescription(APP_NOTE)),
+		app: Argument.String("app.tsx").pipe(Argument.withDescription(APP_NOTE)),
 		...sharedFlags,
 	},
 	(flags) => runPage(flags.app, "ask", flags, 300),
@@ -155,7 +158,7 @@ const askCmd = Command.make(
 const presentCmd = Command.make(
 	"present",
 	{
-		app: Argument.string("app.tsx").pipe(Argument.withDescription(APP_NOTE)),
+		app: Argument.String("app.tsx").pipe(Argument.withDescription(APP_NOTE)),
 		...sharedFlags,
 	},
 	(flags) => runPage(flags.app, "present", flags, 900),
