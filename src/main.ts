@@ -3,7 +3,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { Console, Effect, Layer } from "effect";
 import { Command } from "effect/cli";
-import { FetchHttpClient } from "effect/http";
 import { updateCheck } from "./autoupdate.ts";
 import * as Bdata from "./bdata.ts";
 import * as Budget from "./budget.ts";
@@ -19,6 +18,7 @@ import { uiCmd } from "./commands/ui.ts";
 import { updateCmd } from "./commands/update.ts";
 import * as Fal from "./fal.ts";
 import * as Groq from "./groq.ts";
+import * as Http from "./http.ts";
 import * as OpenRouter from "./openrouter.ts";
 import { plainConsole } from "./output.ts";
 import * as Render from "./render.ts";
@@ -34,11 +34,7 @@ if (bunNotice !== null) process.stderr.write(`${bunNotice}\n\n`);
 
 // Secrets and the HTTP client are needed both directly by commands and by the
 // fal layer, so they are merged in rather than only provided underneath it.
-const base = Layer.mergeAll(
-	Secrets.layer,
-	FetchHttpClient.layer,
-	BunServices.layer,
-);
+const base = Layer.mergeAll(Secrets.layer, Http.layer, BunServices.layer);
 
 const appLayer = Layer.mergeAll(
 	base,
