@@ -1,9 +1,7 @@
 # 15. OpenRouter over HTTP, and why the search command was dropped
 
-## Status
-
-Accepted. Supersedes an earlier version of this ADR that described an
-`openrouter research` command; that command was built, measured, and removed.
+- Status: accepted — replaces an earlier version describing an `openrouter research` command, since built, measured and removed
+- Date: 2026-07-31
 
 ## Context
 

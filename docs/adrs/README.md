@@ -5,7 +5,7 @@ time to discover and would otherwise be rediscovered the hard way.
 
 | # | Decision |
 | --- | --- |
-| [1](0001-effect-v4-beta-on-bun.md) | Effect v4 beta on Bun — and why `bun update --latest` downgrades it |
+| [1](0001-effect-v4-on-bun.md) | Effect v4 on Bun, and why both packages move together |
 | [2](0002-api-keys-in-the-os-credential-store.md) | API keys in the OS credential store, behind an Effect service |
 | [3](0003-ship-a-single-file-bun-bundle.md) | Ship a single-file Bun bundle — and why `--banner` breaks it |
 | [4](0004-resolve-releases-through-the-api.md) | Resolve releases through the API, not `latest/download` |

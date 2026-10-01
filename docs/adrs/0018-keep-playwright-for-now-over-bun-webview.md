@@ -1,10 +1,7 @@
 # 18. Keep Playwright for now, over Bun.WebView
 
-Date: 2026-08-31
-
-## Status
-
-Accepted. Revisit when the triggers below are met.
+- Status: accepted — revisit when the triggers below are met
+- Date: 2026-08-31
 
 ## Context
 

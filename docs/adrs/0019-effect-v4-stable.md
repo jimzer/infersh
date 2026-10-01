@@ -6,7 +6,7 @@
 ## Context
 
 Effect v4.0.0 shipped. npm's `latest` tag now points at it, which retires the
-central warning of [ADR 1](0001-effect-v4-beta-on-bun.md): `bun update --latest`
+central warning of [ADR 1](0001-effect-v4-on-bun.md): `bun update --latest`
 no longer drags the project back to v3.
 
 Going from `4.0.0-beta.102` to `4.0.0` is not a version bump. The beta's

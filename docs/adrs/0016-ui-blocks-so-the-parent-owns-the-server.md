@@ -1,10 +1,7 @@
 # 16. `infer ui` blocks, so the parent owns the server
 
-Date: 2026-07-31
-
-## Status
-
-Accepted.
+- Status: accepted
+- Date: 2026-07-31
 
 ## Context
 
@@ -82,7 +79,7 @@ modules *in process*; the HTML bundler behind `Bun.serve` resolves from the
 filesystem, and answers `500 Build Failed` when a package is only in Bun's
 in-process cache. Packages are therefore installed into the staged directory
 with `bun install`, derived from the bare specifiers left in the flattened
-bundle. This is the same split ADR 12 records for the video renderer, where
+bundle. This is the same split ADR 13 records for the video renderer, where
 Rspack cannot see what Bun resolved in process — the second time it has cost a
 day, which is why it is written down twice.
 
@@ -95,7 +92,7 @@ outside the repository is worse than a failing one.
 from `react/jsx-dev-runtime` by default; the page is served in production mode,
 where React resolves that specifier to a build without the export, and every
 page dies with "jsxDEV is not a function". A `NODE_ENV` define switches the
-build to `jsx` from `react/jsx-runtime`. ADR 12 records the identical failure
+build to `jsx` from `react/jsx-runtime`. ADR 13 records the identical failure
 in the video path.
 
 Production mode is otherwise a straight win: it still bundles on demand at the

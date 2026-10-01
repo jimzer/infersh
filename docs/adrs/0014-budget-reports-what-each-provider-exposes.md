@@ -1,21 +1,30 @@
 # 14. `budget` reports what each provider exposes, and no more
 
-## Status
-
-Accepted.
+- Status: accepted
+- Date: 2026-07-31
 
 ## Context
 
 Every provider here is pay-as-you-go, so "how much is left?" is a question
 worth asking before starting a job — especially for an agent about to spend
-money on someone's behalf. The three providers answer it very differently, and
-each answer was verified against the live APIs rather than taken from docs:
+money on someone's behalf. Each provider answers it differently, and every
+answer was verified against the live APIs rather than taken from docs:
 
 | provider | endpoint | auth | result |
 | --- | --- | --- | --- |
 | fal.ai | `GET /v1/account/billing?expand=credits` | `Authorization: Key …`, **Admin scope** | `{username, credits:{current_balance, currency}}` |
 | Bright Data | `GET /customer/balance` | `Authorization: Bearer …` | `{balance, credit, prepayment, pending_costs}` |
 | Groq | — | — | nothing; the console only |
+| OpenRouter | `GET openrouter.ai/api/v1/credits` | `Authorization: Bearer …`, **inference key** | `{data:{total_credits, total_usage}}` |
+
+OpenRouter arrived later and is recorded in
+[ADR 15](0015-openrouter-over-http-and-unboundable-cost.md); it reports a
+purchased total and a usage total rather than a balance, so `budget` subtracts
+them, and returns null rather than guessing when `total_usage` is absent —
+treating that as zero would report an entire purchase as still available.
+
+Key scope bites here the same way it does at fal, but in the opposite
+direction: an *inference* key reads credits and a *provisioning* key cannot.
 
 Three findings shaped the design:
 
@@ -85,5 +94,7 @@ adding unlike numbers, even though everything is USD today.
   another currency, this is where it would be wrong.
 - Groq's row will stay a link until Groq ships an API. If it ever does, only
   `check`'s `groq` branch changes.
+- Adding a fifth provider means adding a branch and a row, not changing the
+  command: the per-provider outcome variant is what makes that cheap.
 - Balances lag real usage — providers settle on their own schedules — so the
   figures are recent rather than exact, and the command says so.

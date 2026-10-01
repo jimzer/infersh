@@ -1,10 +1,7 @@
 # 17. The social dataset docs are wrong in three places
 
-Date: 2026-08-07
-
-## Status
-
-Accepted.
+- Status: accepted
+- Date: 2026-08-07
 
 ## Context
 

@@ -5,7 +5,7 @@
 
 ## Context
 
-The CLI needs provider API keys (fal.ai, Bright Data, Groq). Keeping them in a
+The CLI needs provider API keys (fal.ai, Bright Data, Groq, OpenRouter). Keeping them in a
 dotfile or a shell profile leaks them into backups, shell history and
 screenshots.
 
