@@ -196,7 +196,7 @@ nothing. For html only the files the composition names are embedded.
   render downloads it — about 200 MB, roughly a minute — and says so on
   stderr; do not mistake that for a hang. Offline, an installed Chrome is used
   instead. `CHROME_PATH` overrides both.
-- After that, images and PDFs render in about a second.
+- After that, images and PDFs render in one to three seconds.
 - Video is slower: the first ever video render installs packages and downloads
   a Chrome build, then later renders are a few seconds. Prefer `--frame` while
   iterating.
