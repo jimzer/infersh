@@ -10,9 +10,12 @@ import { emitJson, jsonFlag } from "../output.ts";
 import {
 	CODECS,
 	type CompositionSource,
+	GL_RENDERERS,
 	PAPER_FORMATS,
+	parseFrames,
 	Render,
 	RenderError,
+	stillPaths,
 	WAIT_EVENTS,
 } from "../render.ts";
 
@@ -479,11 +482,17 @@ const videoCmd = Command.make(
 			Flag.withDefault(false),
 			Flag.withDescription("Drop the audio track from the output."),
 		),
-		frame: Flag.Int("frame").pipe(
-			Flag.withMetavar("n"),
+		frame: Flag.String("frame").pipe(
+			Flag.withMetavar("n[,n…]"),
 			Flag.optional,
 			Flag.withDescription(
-				"Render just this one frame as a still image instead of encoding a video. Nothing is encoded, so it is far faster than a full render — the quick way to check a composition looks right at a given moment before committing to the whole thing. The output extension picks the format (.png or .jpeg); defaults to out/frame.png.",
+				"Render these frames as still images instead of encoding a video, e.g. 45 or 0,45,90. Nothing is encoded and several frames share one bundle and one browser, so it is far faster than a full render — the quick way to check a composition before committing to the whole thing. One frame writes to --output (default out/frame.png); several write beside it, numbered by frame: frame-0.png, frame-45.png. The output extension picks the format (.png or .jpeg).",
+			),
+		),
+		gl: Flag.Literals("gl", GL_RENDERERS).pipe(
+			Flag.optional,
+			Flag.withDescription(
+				"Chrome's OpenGL backend. Unset leaves Remotion's default, which suits most machines. Use swangle on a machine with no GPU — Linux servers, CI, containers — and angle for GPU-heavy compositions such as WebGL or three.js on a Mac.",
 			),
 		),
 		assets: Flag.String("assets").pipe(
@@ -522,17 +531,23 @@ const videoCmd = Command.make(
 				dimensions.durationInFrames = config.duration.value;
 			}
 
-			const frame = Option.getOrUndefined(config.frame);
-			if (frame !== undefined && frame < 0) {
+			const parsedFrames = Option.map(config.frame, parseFrames);
+			if (
+				Option.isSome(parsedFrames) &&
+				typeof parsedFrames.value === "string"
+			) {
 				return yield* Effect.fail(
-					new RenderError({ reason: "--frame must not be negative." }),
+					new RenderError({ reason: parsedFrames.value }),
 				);
 			}
-			if (frame !== undefined && (from !== undefined || to !== undefined)) {
+			const frames = Option.getOrUndefined(parsedFrames) as
+				| ReadonlyArray<number>
+				| undefined;
+			if (frames !== undefined && (from !== undefined || to !== undefined)) {
 				return yield* Effect.fail(
 					new RenderError({
 						reason:
-							"--frame renders a single still, so it cannot be combined with --from or --to.",
+							"--frame renders stills, so it cannot be combined with --from or --to.",
 					}),
 				);
 			}
@@ -540,7 +555,7 @@ const videoCmd = Command.make(
 			const source = yield* resolveSource(config.composition);
 			const props = yield* resolveProps(config.props);
 			const output = Option.getOrElse(config.output, () =>
-				frame === undefined ? "out/video.mp4" : "out/frame.png",
+				frames === undefined ? "out/video.mp4" : "out/frame.png",
 			);
 
 			yield* Console.error(
@@ -564,20 +579,33 @@ const videoCmd = Command.make(
 							? from
 							: undefined,
 				muted: config.muted,
-				frame,
+				stills:
+					frames === undefined
+						? undefined
+						: stillPaths(resolve(output), frames),
 				stillFormat: /\.jpe?g$/i.test(output) ? "jpeg" : "png",
+				gl: Option.getOrUndefined(config.gl),
 			});
 			if (config.json) {
-				return yield* emitJson({
-					output: written,
-					kind: frame === undefined ? "video" : "still",
-					...(frame === undefined
-						? { codec: Option.getOrElse(config.codec, () => "h264") }
-						: { frame }),
-					...dimensions,
-				});
+				return yield* emitJson(
+					frames === undefined
+						? {
+								output: written[0],
+								kind: "video",
+								codec: Option.getOrElse(config.codec, () => "h264"),
+								...dimensions,
+							}
+						: {
+								kind: "stills",
+								stills: frames.map((frame, index) => ({
+									frame,
+									output: written[index],
+								})),
+								...dimensions,
+							},
+				);
 			}
-			yield* Console.log(written);
+			for (const path of written) yield* Console.log(path);
 		}),
 ).pipe(
 	Command.withShortDescription("Render a composition to a video."),
@@ -593,9 +621,14 @@ config, and any flag overrides it:
 
   export const config = { width: 1080, height: 1920, fps: 30, durationInFrames: 90 };
 
-Use --frame to render one frame as a still instead. That skips encoding
-entirely, so it is the fast way to check a composition looks right at a
-given moment before rendering all of it.
+To size the video from its props — ten slides run longer than three —
+export Remotion's calculateMetadata, which receives the props and returns
+any of width, height, fps and durationInFrames. It overrides config;
+flags still override both.
+
+Use --frame to render stills instead, e.g. --frame 0,45,90. That skips
+encoding and shares one bundle across the frames, so it is the fast way
+to check a composition before rendering all of it.
 
 Packages the composition imports are installed on demand from Bun's
 cache. The first video render also downloads a Chrome build, which is

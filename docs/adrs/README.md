@@ -29,6 +29,7 @@ time to discover and would otherwise be rediscovered the hard way.
 | [22](0022-render-on-playwrights-pinned-headless-shell.md) | Render on Playwright's pinned headless shell — 2.6x faster, and stable across browser updates |
 | [23](0023-staging-on-effect-filesystem-and-childprocess.md) | Staging on Effect's FileSystem and ChildProcess |
 | [24](0024-effect-schema-for-all-parsing.md) | Effect Schema for all parsing — leniency declared, passthrough checked with Schema.is |
+| [25](0025-video-pinned-sized-by-props-and-batched-stills.md) | Video: pinned Remotion, size from props, batched stills |
 
 ## Writing one
 

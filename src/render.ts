@@ -43,12 +43,15 @@ import {
 import sharedSource from "./render-shared.ts" with { type: "text" };
 import {
 	CODECS,
+	GL_RENDERERS,
 	INDEX_SOURCE,
 	PACKAGE_JSON_SOURCE,
+	parseFrames,
 	ROOT_SOURCE,
+	stillPaths,
 	TSCONFIG_SOURCE,
-	VIDEO_CHILD_SOURCE,
-	VIDEO_CORE_DEPS,
+	videoDeps,
+	WORKER_SOURCE,
 } from "./render-video-source.ts";
 import {
 	cacheDir,
@@ -62,7 +65,7 @@ import {
 } from "./stage.ts";
 import { TAILWIND_NAME, TAILWIND_PACKAGE } from "./tailwind.ts";
 
-export { CODECS };
+export { CODECS, GL_RENDERERS, parseFrames, stillPaths };
 
 /** The bare package specifiers left in a flattened composition bundle. */
 export const bareImports = (code: string): ReadonlyArray<string> => {
@@ -165,9 +168,17 @@ export interface VideoRequest {
 	readonly scale?: number;
 	readonly frameRange?: readonly [number, number] | number;
 	readonly muted: boolean;
-	/** Render this single frame as a still instead of encoding a video. */
-	readonly frame?: number;
+	/**
+	 * Render these frames as stills instead of encoding a video. They share one
+	 * bundle and one browser, so several cost little more than one.
+	 */
+	readonly stills?: ReadonlyArray<{
+		readonly frame: number;
+		readonly outputPath: string;
+	}>;
 	readonly stillFormat?: string;
+	/** Chrome's OpenGL backend; unset leaves Remotion's default. */
+	readonly gl?: string;
 }
 
 export interface HtmlRequest {
@@ -187,9 +198,10 @@ export interface RenderShape {
 	) => Effect.Effect<string, RenderError>;
 	readonly toPdf: (request: PdfRequest) => Effect.Effect<string, RenderError>;
 	readonly toHtml: (request: HtmlRequest) => Effect.Effect<string, RenderError>;
+	/** Every path written: the video, or one still per frame. */
 	readonly toVideo: (
 		request: VideoRequest,
-	) => Effect.Effect<string, RenderError>;
+	) => Effect.Effect<ReadonlyArray<string>, RenderError>;
 }
 
 export class Render extends Context.Service<Render, RenderShape>()("Render") {}
@@ -663,8 +675,8 @@ const make = (platform: Context.Context<Platform>): RenderShape => {
 
 			yield* writeFile(join(dir, "package.json"), PACKAGE_JSON_SOURCE);
 			yield* writeFile(join(dir, "tsconfig.json"), TSCONFIG_SOURCE);
-			yield* writeFile(join(dir, "Root.tsx"), ROOT_SOURCE);
-			yield* writeFile(join(dir, "index.ts"), INDEX_SOURCE);
+			yield* writeFile(join(dir, "Root.jsx"), ROOT_SOURCE);
+			yield* writeFile(join(dir, "index.js"), INDEX_SOURCE);
 			yield* writeFile(
 				join(dir, "config.json"),
 				JSON.stringify({
@@ -676,26 +688,28 @@ const make = (platform: Context.Context<Platform>): RenderShape => {
 			yield* linkBrowserCache(dir);
 			// The flattened bundle's remaining bare specifiers *are* the external
 			// dependencies, which beats guessing them from the original source.
-			yield* install(dir, [
-				...new Set([...VIDEO_CORE_DEPS, ...bareImports(code)]),
-			]);
+			yield* install(dir, [...videoDeps(bareImports(code))]);
 
-			const childPath = join(dir, "render-video-child.mjs");
-			yield* writeFile(childPath, VIDEO_CHILD_SOURCE);
+			const childPath = join(dir, "worker.js");
+			yield* writeFile(childPath, WORKER_SOURCE);
 			const fs = yield* FileSystem.FileSystem;
-			yield* fs
-				.makeDirectory(dirname(request.outputPath), { recursive: true })
-				.pipe(
-					Effect.mapError(
-						(cause) =>
-							new RenderError({
-								reason: `Could not create ${dirname(request.outputPath)}: ${cause.message}`,
-							}),
-					),
-				);
+			const written = request.stills?.map((still) => still.outputPath) ?? [
+				request.outputPath,
+			];
+			yield* Effect.forEach(
+				[...new Set(written.map((path) => dirname(path)))],
+				(directory) => fs.makeDirectory(directory, { recursive: true }),
+			).pipe(
+				Effect.mapError(
+					(cause) =>
+						new RenderError({
+							reason: `Could not create the output directory: ${cause.message}`,
+						}),
+				),
+			);
 
 			const payload = JSON.stringify({
-				entryPoint: join(dir, "index.ts"),
+				entryPoint: join(dir, "index.js"),
 				outputPath: request.outputPath,
 				publicDir: request.assetDir ? resolve(request.assetDir) : null,
 				props: request.props ?? {},
@@ -705,7 +719,8 @@ const make = (platform: Context.Context<Platform>): RenderShape => {
 				scale: request.scale,
 				frameRange: request.frameRange,
 				muted: request.muted,
-				frame: request.frame,
+				stills: request.stills,
+				gl: request.gl,
 				stillFormat: request.stillFormat,
 			});
 			// stdout is discarded rather than piped: an unread pipe fills and blocks
@@ -722,7 +737,7 @@ const make = (platform: Context.Context<Platform>): RenderShape => {
 					}),
 				);
 			}
-			return request.outputPath;
+			return written;
 		}, finish),
 	};
 };

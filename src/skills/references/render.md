@@ -123,6 +123,17 @@ export default ({ title = "Hi" }: { title?: string }) => {
 - Use `<Sequence from={30} durationInFrames={60}>` to time sections.
 - **`export const config`** sets `width`, `height`, `fps` and
   `durationInFrames`. Flags override it; an unset flag never overrides it.
+- **When the length depends on the data, export `calculateMetadata`.** It
+  receives the props and returns any of those four, so ten slides run longer
+  than three without anyone counting frames:
+
+  ```tsx
+  export const calculateMetadata = ({ props }) => ({
+    durationInFrames: props.slides.length * 90,
+  });
+  ```
+
+  It overrides `config`; flags still override both.
 - `--duration` is in **frames, not seconds** — at 30fps, 90 frames is three
   seconds.
 - **CSS `transition` and `animation` do not work**, nor Tailwind animation
@@ -133,14 +144,15 @@ export default ({ title = "Hi" }: { title?: string }) => {
 ### Iterate with `--frame`, then encode
 
 ```bash
-infer render video intro.tsx --frame 45 -o check.png   # one frame, no encoding
+infer render video intro.tsx --frame 0,45,89 -o check.png   # check-0.png, check-45.png, check-89.png
 ```
 
-This renders a single frame as a still and skips encoding entirely, and it is
+This renders frames as stills and skips encoding entirely, and it is
 frame-exact — what you see is what the video will contain at that frame. **Use
-it to check your work and correct it before rendering the whole thing.** A good
-loop is: render frame 0, the middle frame and the last frame, look at each, fix,
-then encode.
+it to check your work and correct it before rendering the whole thing.** Ask for
+several frames in one call — first, middle, last — rather than one call each:
+they share the bundle and the browser, so three frames cost about the same as
+one. A frame past the end is reported with the composition's real length.
 
 ### Licence
 
@@ -191,6 +203,9 @@ nothing. For html only the files the composition names are embedded.
 
 ## Requirements and cost
 
+- On a machine with no GPU — a Linux server, CI, a container — pass
+  `--gl swangle` to `render video`; Remotion recommends it there. Otherwise
+  leave `--gl` unset.
 - Image and pdf use Playwright's headless Chrome, **pinned**, so a render does
   not change when the system browser updates. The **first ever** image or pdf
   render downloads it — about 200 MB, roughly a minute — and says so on

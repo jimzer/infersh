@@ -135,10 +135,14 @@ common case; look up `@remotion/media-parser` rather than guessing.
 
 ## Working with `infer`
 
-- Frame size and length come from `export const config` on the composition, and
-  any flag overrides it. See [render.md](render.md).
-- **Iterate with `--frame`**, which renders one frame and skips encoding
-  entirely. Check frame 0, the middle and the last before encoding anything.
+- Frame size and length come from `export const config` on the composition, or
+  from `export const calculateMetadata` when they depend on the props; any flag
+  overrides both. See [render.md](render.md).
+- **Iterate with `--frame`**, which renders stills and skips encoding entirely.
+  Check the first, middle and last frames in one call — `--frame 0,45,89` —
+  before encoding anything.
+- Remotion is pinned to one version, and every `@remotion/*` package you import
+  is installed at that same version, so mixing them is never an issue.
 - Fonts are not automatic. Use `@remotion/google-fonts`, or inject a `<link>`
   and wait for it — a missing font silently falls back and shifts your layout.
 - Randomness must be deterministic: use `random()` from `remotion` with a fixed

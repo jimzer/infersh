@@ -69,7 +69,7 @@ infer render image card.tsx --assets ./public --width 1200 --scale 2
 infer render pdf invoice.tsx --props ./data.json --margin 1cm
 infer render html dashboard.tsx --props ./data.json -o dashboard.html
 infer render video intro.tsx -o intro.mp4 --duration 90
-infer render video intro.tsx --frame 45 -o check.png   # one frame, no encoding
+infer render video intro.tsx --frame 0,45,89 -o check.png   # stills, no encoding
 cat card.tsx | infer render image - -o card.png
 ```
 
@@ -81,7 +81,7 @@ cat card.tsx | infer render image - -o card.png
 export const config = { width: 1080, height: 1920, fps: 30, durationInFrames: 90 };
 ```
 
-`--frame` renders a single still instead of a video. Encoding is skipped, so it is the quick way to check a composition looks right at a given moment before rendering all of it.
+`--frame` renders stills instead of a video — one frame, or several like `0,45,89`, which share one bundle and cost about the same as one. Encoding is skipped, so it is the quick way to check a composition before rendering all of it. When the length depends on the data, export Remotion's `calculateMetadata` and size the video from its props. Remotion is pinned to one version, applied to every `@remotion/*` package a composition imports.
 
 **Licence:** Remotion is free for individuals, non-profits and for-profit organisations with up to 3 employees. Larger organisations need a paid company licence — see [remotion.pro](https://remotion.pro). This is printed on every video render.
 

@@ -1,142 +1,112 @@
 /**
- * Sources staged into the temp directory for a video render.
+ * What a video render stages into its temp directory, and the versions it
+ * installs.
  *
- * These are plain string constants rather than real files in `src/`, because
- * they import Remotion — keeping them as data means Remotion never becomes a
- * dependency of this repo, and its licence obligation stays with the person
- * who chooses to run `infer render video`. See `docs/adrs/0013`.
+ * The Remotion-facing files live in `src/remotion/` as real JavaScript files —
+ * linted and formatted like everything else, though not typechecked — but are embedded here as text and never
+ * imported, so Remotion never becomes a dependency of this repo and its licence
+ * obligation stays with whoever runs `infer render video`. See `docs/adrs/0013`.
  *
  * Nothing user-supplied is interpolated into any of them: dimensions and props
  * arrive through `config.json`, paths and options through argv.
  */
 
+import { basename, dirname, extname, join } from "node:path";
+// Text imports: Bun inlines the characters and never follows the imports
+// inside, which is what keeps Remotion out of this repo. Being text for the
+// whole build, these files must never be imported normally.
+// @ts-expect-error text import: Bun inlines the file contents as a string
+import indexSource from "./remotion/index.js" with { type: "text" };
+// @ts-expect-error text import: Bun inlines the file contents as a string
+import rootSource from "./remotion/Root.jsx" with { type: "text" };
+// @ts-expect-error text import: Bun inlines the file contents as a string
+import workerSource from "./remotion/worker.js" with { type: "text" };
+
+export const ROOT_SOURCE: string = rootSource;
+export const INDEX_SOURCE: string = indexSource;
+export const WORKER_SOURCE: string = workerSource;
+
 /**
- * Registers the composition.
+ * The Remotion every video render uses.
  *
- * Configuration is merged rather than baked in: built-in defaults, then a
- * `config` export on the composition, then whatever flags were passed. Only
- * explicitly-set flags reach `config.json`, so a flag always wins and an
- * absent flag never overrides the composition's own choice.
+ * Pinned, and applied to every `@remotion/*` package — including any the
+ * composition imports — because Remotion refuses to run with mixed versions
+ * and ships two or three releases a week. Unpinned, a render could change, or
+ * break, between two runs with nothing changed here.
  */
-export const ROOT_SOURCE = `import { Composition } from "remotion";
-import Component, * as compositionModule from "./composition";
-import overrides from "./config.json";
+export const REMOTION_VERSION = "4.0.532";
 
-const DEFAULTS = { width: 1920, height: 1080, fps: 30, durationInFrames: 150 };
+/** The React that Remotion release is tested against. */
+export const REACT_VERSION = "19.2.3";
 
-const fromComposition =
-	(compositionModule as { config?: Record<string, number> }).config ??
-	(Component as unknown as { config?: Record<string, number> }).config ??
-	{};
+const CORE_PACKAGES = [
+	"remotion",
+	"@remotion/bundler",
+	"@remotion/renderer",
+	"react",
+	"react-dom",
+] as const;
 
-const resolved = { ...DEFAULTS, ...fromComposition, ...overrides.dimensions };
-
-export const Root: React.FC = () => (
-	<Composition
-		id="main"
-		component={Component as React.FC}
-		width={resolved.width}
-		height={resolved.height}
-		fps={resolved.fps}
-		durationInFrames={resolved.durationInFrames}
-		defaultProps={overrides.props}
-	/>
-);
-`;
-
-export const INDEX_SOURCE = `import { registerRoot } from "remotion";
-import { Root } from "./Root";
-
-registerRoot(Root);
-`;
+const pin = (name: string): string =>
+	name === "remotion" || name.startsWith("@remotion/")
+		? `${name}@${REMOTION_VERSION}`
+		: name === "react" || name === "react-dom"
+			? `${name}@${REACT_VERSION}`
+			: name;
 
 /**
- * The worker. Bundles the staged project with Rspack, selects the composition
- * and renders it, reporting progress on stderr so stdout stays the output path.
+ * Everything to install for a render: the core packages plus whatever the
+ * composition imports, with Remotion and React pinned wherever they appear.
  */
-export const VIDEO_CHILD_SOURCE = `import { bundle } from "@remotion/bundler";
-import { renderMedia, renderStill, selectComposition } from "@remotion/renderer";
+export const videoDeps = (
+	imports: ReadonlyArray<string>,
+): ReadonlyArray<string> => [
+	...new Set([...CORE_PACKAGES, ...imports].map(pin)),
+];
 
-const job = JSON.parse(process.argv[2] ?? "{}");
+/** Chrome's OpenGL backends, as Remotion names them. */
+export const GL_RENDERERS = [
+	"angle",
+	"angle-egl",
+	"egl",
+	"swangle",
+	"swiftshader",
+	"vulkan",
+] as const;
 
-const write = (line) => process.stderr.write(line + "\\n");
+/**
+ * Parses `--frame`: one frame, or several separated by commas.
+ *
+ * Returns the frames in the order given without duplicates, or a message
+ * saying what is wrong.
+ */
+export const parseFrames = (raw: string): ReadonlyArray<number> | string => {
+	const parts = raw.split(",").map((part) => part.trim());
+	if (parts.some((part) => !/^\d+$/.test(part))) {
+		return `--frame takes frame numbers separated by commas, like 0,45,90; got "${raw}".`;
+	}
+	return [...new Set(parts.map(Number))];
+};
 
-let lastBundlePercent = -1;
-const serveUrl = await bundle({
-	entryPoint: job.entryPoint,
-	// Rspack is Remotion's intended default going forward and is a public
-	// option, not an internal one.
-	rspack: true,
-	// Assets are served from wherever they already live. Symlinking avoids
-	// copying a potentially large folder into the temp directory.
-	publicDir: job.publicDir ?? null,
-	symlinkPublicDir: true,
-	onProgress: (percent) => {
-		const rounded = Math.floor(percent / 10) * 10;
-		if (rounded > lastBundlePercent) {
-			lastBundlePercent = rounded;
-			write("bundling " + rounded + "%");
-		}
-	},
-});
-
-const composition = await selectComposition({
-	serveUrl,
-	id: "main",
-	inputProps: job.props ?? {},
-});
-
-write(
-	"composition " +
-		composition.width +
-		"x" +
-		composition.height +
-		" " +
-		composition.fps +
-		"fps " +
-		composition.durationInFrames +
-		" frames",
-);
-
-// A single frame skips encoding entirely — the fast way to check a
-// composition looks right before paying for the whole render.
-if (job.frame !== undefined) {
-	write("rendering frame " + job.frame);
-	await renderStill({
-		composition,
-		serveUrl,
-		output: job.outputPath,
-		frame: job.frame,
-		inputProps: job.props ?? {},
-		imageFormat: job.stillFormat ?? "png",
-		...(job.scale !== undefined ? { scale: job.scale } : {}),
-		chromiumOptions: { gl: "angle" },
-	});
-	process.exit(0);
-}
-
-let lastRenderPercent = -1;
-await renderMedia({
-	composition,
-	serveUrl,
-	codec: job.codec ?? "h264",
-	outputLocation: job.outputPath,
-	inputProps: job.props ?? {},
-	...(job.concurrency ? { concurrency: job.concurrency } : {}),
-	...(job.crf !== undefined ? { crf: job.crf } : {}),
-	...(job.scale !== undefined ? { scale: job.scale } : {}),
-	...(job.frameRange ? { frameRange: job.frameRange } : {}),
-	...(job.muted ? { muted: true } : {}),
-	chromiumOptions: { gl: "angle" },
-	onProgress: ({ progress }) => {
-		const rounded = Math.floor(progress * 100 / 5) * 5;
-		if (rounded > lastRenderPercent) {
-			lastRenderPercent = rounded;
-			write("rendering " + rounded + "%");
-		}
-	},
-});
-`;
+/**
+ * Where each still goes. One frame writes to the output path as given; several
+ * write beside it, numbered by frame: `check.png` becomes `check-0.png`,
+ * `check-45.png`.
+ */
+export const stillPaths = (
+	output: string,
+	frames: ReadonlyArray<number>,
+): ReadonlyArray<{ readonly frame: number; readonly outputPath: string }> => {
+	if (frames.length === 1) {
+		return [{ frame: frames[0] as number, outputPath: output }];
+	}
+	const ext = extname(output);
+	const stem = basename(output, ext);
+	return frames.map((frame) => ({
+		frame,
+		outputPath: join(dirname(output), `${stem}-${frame}${ext}`),
+	}));
+};
 
 /** Minimal manifest so `bun install` has somewhere to record dependencies. */
 export const PACKAGE_JSON_SOURCE = JSON.stringify(
@@ -162,15 +132,6 @@ export const TSCONFIG_SOURCE = JSON.stringify(
 	null,
 	2,
 );
-
-/** Packages every video render needs, whatever the composition imports. */
-export const VIDEO_CORE_DEPS = [
-	"remotion",
-	"@remotion/bundler",
-	"@remotion/renderer",
-	"react",
-	"react-dom",
-];
 
 export const CODECS = [
 	"h264",

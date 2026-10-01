@@ -24,7 +24,8 @@ that obligation without ever seeing Remotion named. The licence is therefore
 printed to stderr on every video render and stated in `--help`.
 
 Remotion also never becomes a dependency of this repo: the composition root,
-entrypoint and worker are string constants in `render-video-source.ts`, so
+entrypoint and worker are embedded as text and staged per render — originally
+string constants, now JavaScript files in `src/remotion/` (ADR 25) — so
 `bun install` here pulls nothing from Remotion and the obligation stays with
 whoever runs the command.
 
