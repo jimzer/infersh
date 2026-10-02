@@ -136,7 +136,7 @@ process group mid-encode: `.int.partial-<pid>.mp4` remained (the requested
 output did not). Failures and errors clean up; signals do not — and the same
 applies to every scoped temp directory in the CLI (ADR 23). Fixing it belongs
 in `main.ts` (interrupt the main fiber on SIGINT/SIGTERM), for all commands at
-once.
+once. Fixed by ADR 32.
 
 **testsrc2 rounds odd sizes.** `testsrc2=size=641x361` produces 640x360, and so
 does cropping a yuv420p frame to odd sides; odd-dimension fixtures need

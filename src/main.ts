@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
-import { BunServices } from "@effect/platform-bun";
-import { Console, Effect, Layer } from "effect";
+import { BunRuntime, BunServices } from "@effect/platform-bun";
+import { Console, Effect, Exit, Layer, Runtime } from "effect";
 import { Command } from "effect/cli";
 import { updateCheck } from "./autoupdate.ts";
 import * as Bdata from "./bdata.ts";
@@ -73,7 +73,7 @@ const inferCmd = Command.make("infer").pipe(
 // `runWith` already absorbs the QuitError raised when a prompt is cancelled,
 // so everything left here is a real failure worth printing. The exit code is
 // carried out rather than thrown so the update check still runs.
-const exitCode = await Command.runWith(inferCmd, { version: VERSION })(
+const program = Command.runWith(inferCmd, { version: VERSION })(
 	process.argv.slice(2),
 ).pipe(
 	Effect.as(0),
@@ -83,7 +83,22 @@ const exitCode = await Command.runWith(inferCmd, { version: VERSION })(
 	Effect.tap(() => updateCheck),
 	Effect.provide(appLayer),
 	Effect.provideService(Console.Console, plainConsole),
-	Effect.runPromise,
 );
 
-process.exit(exitCode);
+// `runMain` turns Ctrl-C and SIGTERM into an interruption, so every scope
+// closes — temp dirs, partial outputs, child processes — before exiting 130.
+// The process exits explicitly even on success: an idle keep-alive socket or
+// credential-store handle must not hold it open.
+BunRuntime.runMain(program, {
+	disableErrorReporting: true,
+	teardown: (exit, onExit) => {
+		const done = (code: number) => {
+			onExit(code);
+			process.exit(code);
+		};
+		// Success carries the command's own code; an interruption gives 130.
+		if (Exit.isSuccess(exit) && typeof exit.value === "number")
+			done(exit.value);
+		else Runtime.defaultTeardown(exit, done);
+	},
+});

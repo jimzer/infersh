@@ -470,32 +470,6 @@ const attempt = (argv: ReadonlyArray<string>, options: EachOptions) => {
 };
 
 /**
- * Fails on SIGINT or SIGTERM, and never completes otherwise.
- *
- * Raced against the rows, it turns a signal into interruption, so every
- * running command's scope closes and the command is killed. Without it, a
- * signal sent to this process alone — an agent's harness stopping it, `kill`
- * — ends it at once and leaves its children running unobserved: still doing,
- * and billing for, work whose results nobody records.
- */
-const stopSignal = Effect.callback<never, EachError>((resume) => {
-	const stop = (signal: string) =>
-		resume(
-			Effect.fail(
-				new EachError({
-					reason: `Stopped by ${signal}; the commands still running were killed. Every row that finished is kept: run the same command again to resume.`,
-				}),
-			),
-		);
-	process.once("SIGINT", stop);
-	process.once("SIGTERM", stop);
-	return Effect.sync(() => {
-		process.off("SIGINT", stop);
-		process.off("SIGTERM", stop);
-	});
-});
-
-/**
  * Runs every row whose command has no kept result, `concurrency` at a time,
  * and hands each output line to `emit` in input order. A success is journaled
  * the moment it lands, so an interrupted run loses only what was in flight.
@@ -666,7 +640,15 @@ export const runEach = Effect.fn("Each.run")(function* (
 				}
 			}),
 		{ concurrency: options.concurrency, discard: true },
-	).pipe(Effect.raceFirst(stopSignal));
+	).pipe(
+		// Ctrl-C and SIGTERM interrupt the whole CLI (main.ts), which closes
+		// every running command's scope and kills it. Say what survives.
+		Effect.onInterrupt(() =>
+			Console.error(
+				"each: stopped; the commands still running were killed. Every row that finished is kept: run the same command again to resume.",
+			),
+		),
+	);
 
 	const { ok, failed, reused } = yield* Ref.get(counts);
 	yield* Console.error(

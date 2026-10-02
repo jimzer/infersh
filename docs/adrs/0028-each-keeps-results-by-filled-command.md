@@ -77,9 +77,9 @@ process group, children included. `runEach` now races the rows against a
 SIGINT/SIGTERM listener (`Effect.callback`); the signal interrupts the rows,
 every child's scope closes and kills it, and the run fails with a message
 saying the finished rows are kept. Verified: `kill -TERM` mid-run left no
-child processes and the next run ran only the unfinished rows. Moving the
-whole CLI to `BunRuntime.runMain` would give every command this; that was left
-alone here because it changes `main.ts`'s exit handling for every command.
+child processes and the next run ran only the unfinished rows. Superseded by
+ADR 32: the whole CLI now runs under `BunRuntime.runMain`, and `each` only
+prints that message on interruption.
 
 **Output order without head-of-line blocking.** `Stream.mapEffect` with
 concurrency keeps order but does so by holding a window of in-flight effects,
