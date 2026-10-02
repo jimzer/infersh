@@ -30,6 +30,7 @@ time to discover and would otherwise be rediscovered the hard way.
 | [23](0023-staging-on-effect-filesystem-and-childprocess.md) | Staging on Effect's FileSystem and ChildProcess |
 | [24](0024-effect-schema-for-all-parsing.md) | Effect Schema for all parsing — leniency declared, passthrough checked with Schema.is |
 | [25](0025-video-pinned-sized-by-props-and-batched-stills.md) | Video: pinned Remotion, size from props, batched stills |
+| [26](0026-ui-serves-one-prebuilt-page.md) | `ui` serves one prebuilt page, gzipped, and reports over stdout |
 
 ## Writing one
 

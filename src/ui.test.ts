@@ -74,12 +74,14 @@ describe("buildPage", () => {
 		);
 	});
 
-	test("inlines Tailwind only when given, and never from a CDN", () => {
-		expect(page({ tailwindScript: "var tw=1;" })).toContain(
-			"<script>var tw=1;</script>",
+	test("links the page's own CSS only when it imported some", () => {
+		// Tailwind is added after the standalone build, not here, so the bundler
+		// never parses it; the page's CSS is linked so the build inlines it.
+		expect(page()).not.toContain("composition.css");
+		expect(page({ stylesheet: true })).toContain(
+			'<link rel="stylesheet" href="./composition.css">',
 		);
-		expect(page()).not.toContain("var tw=1;");
-		expect(page({ tailwindScript: "var tw=1;" })).not.toContain("cdn.");
+		expect(page()).not.toContain("cdn.");
 	});
 
 	test("appends --head after the base style so it can override it", () => {

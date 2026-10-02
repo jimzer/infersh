@@ -47,10 +47,9 @@ output when a page imported CSS. Reusing render's pass fixed both, and the page
 now links the CSS it imported. And the video child's stdout was a pipe nobody
 read, which blocks a child once enough is written to it; it is now discarded.
 
-**Polling became a retry.** Waiting for `ui`'s server to report its port is an
-`Effect.retry` — every 50 ms, up to 300 times, only while the child is alive —
-and a half-written `ready.json` is a retried failure rather than an exception
-from `JSON.parse` that crashed the CLI.
+**Polling became a retry** — every 50 ms while the child was alive — and a
+half-written `ready.json` a retried failure rather than a `JSON.parse` crash.
+ADR 26 later removed the file altogether: the server reports over stdout.
 
 **Effect Schema was tried for that and first rejected on size — wrongly.**
 Decoding those two files with it appeared to add 146 KB to the bundle and

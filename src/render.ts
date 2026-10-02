@@ -533,7 +533,7 @@ export const embedAssets = (
  * as it does for a composition read from stdin — packages installed there
  * afterwards still fail with `Could not resolve: "react"`.
  */
-const buildStandalone = (
+export const buildStandalone = (
 	dir: string,
 	indexPath: string,
 ): Effect.Effect<string, Failure, Platform> =>

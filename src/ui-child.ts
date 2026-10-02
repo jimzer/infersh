@@ -1,35 +1,41 @@
 /**
  * The page server.
  *
- * Runs as a separate process against packages the parent installed into the
- * staged directory, so React and whatever else the page imports are never
- * dependencies of the CLI itself.
+ * Serves one page the CLI already built — a single self-contained HTML file,
+ * the same standalone build `render html` produces — and reports back on
+ * stdout: one JSON line when it is listening, one when the page has answered,
+ * timed out or been cancelled. Page errors go to stderr, which the CLI shows.
  *
  * This file is never imported by the CLI. It is embedded as text and written
- * into a temp directory beside the generated `index.html` and `app.js`, which
- * is why its only import is that page. See `docs/adrs/0016`.
+ * into the run's temp directory beside the built page. See `docs/adrs/0016`.
  */
-
-// Only exists in the staged temp directory; Bun resolves and bundles it at
-// runtime, which is what lets the page be written after this file was built.
-import index from "./index.html";
 
 interface Job {
 	readonly token: string;
 	readonly port: number;
 	readonly timeoutMs: number;
-	readonly readyPath: string;
-	readonly resultPath: string;
+	readonly pagePath: string;
 }
 
 const job: Job = JSON.parse(process.argv[2] ?? "{}");
 
+/** One line of the protocol the CLI reads from stdout. */
+const send = (message: Record<string, unknown>): void => {
+	process.stdout.write(`${JSON.stringify(message)}\n`);
+};
+
+const page = await Bun.file(job.pagePath).bytes();
+// Compressed once, up front. A page carries React and Tailwind inline, about
+// 500 KB; gzip brings it to roughly a third, which matters over --share on a
+// phone and costs nothing locally.
+const gzipped = Bun.gzipSync(page);
+
 let settled = false;
 
-const finish = async (status: string, payload: unknown): Promise<void> => {
+const finish = (status: string, payload: unknown): void => {
 	if (settled) return;
 	settled = true;
-	await Bun.write(job.resultPath, JSON.stringify({ status, payload }));
+	send({ type: "answer", status, payload });
 	// Let the browser's own request finish before the socket goes away,
 	// otherwise the page reports a network error on an answer that landed.
 	setTimeout(() => {
@@ -41,18 +47,25 @@ const finish = async (status: string, payload: unknown): Promise<void> => {
 const authorised = (request: Request): boolean =>
 	request.headers.get("x-infer-token") === job.token;
 
+const servePage = (request: Request): Response => {
+	const headers = {
+		"Content-Type": "text/html; charset=utf-8",
+		"Cache-Control": "no-store",
+		Vary: "Accept-Encoding",
+	};
+	return /\bgzip\b/.test(request.headers.get("accept-encoding") ?? "")
+		? new Response(gzipped, {
+				headers: { ...headers, "Content-Encoding": "gzip" },
+			})
+		: new Response(page, { headers });
+};
+
 const server = Bun.serve({
 	port: job.port,
 	hostname: "127.0.0.1",
-	// Production mode still bundles the page on demand at the first request,
-	// and skips the hot-reload client and React's development build: 178KB
-	// instead of 971KB, which is worth having over a phone connection.
-	development: false,
 	routes: {
-		// The token is the route, so Bun's own router does the check. A query
-		// parameter would mean a custom handler, and the bundled page is not
-		// something a handler can return.
-		[`/${job.token}`]: index,
+		// The token is the route, so Bun's own router does the check.
+		[`/${job.token}`]: servePage,
 
 		"/api/submit": {
 			POST: async (request: Request) => {
@@ -62,8 +75,7 @@ const server = Bun.serve({
 					status?: string;
 					payload?: unknown;
 				} | null;
-				const status = body?.status ?? "submitted";
-				await finish(status, body?.payload ?? null);
+				finish(body?.status ?? "submitted", body?.payload ?? null);
 				return Response.json({ ok: true });
 			},
 		},
@@ -82,13 +94,11 @@ const server = Bun.serve({
 	fetch: () =>
 		new Response(
 			"Not found. Open the exact URL infer printed, token included.",
-			{
-				status: 404,
-			},
+			{ status: 404 },
 		),
 });
 
-await Bun.write(job.readyPath, JSON.stringify({ port: server.port }));
+send({ type: "ready", port: server.port });
 
 // The parent holds this process's stdin open and never writes to it. However
 // the parent ends — even kill -9, which no cleanup code can catch — the OS
@@ -100,6 +110,4 @@ void (async () => {
 	process.exit(0);
 })();
 
-setTimeout(() => {
-	void finish("timeout", null);
-}, job.timeoutMs);
+setTimeout(() => finish("timeout", null), job.timeoutMs);

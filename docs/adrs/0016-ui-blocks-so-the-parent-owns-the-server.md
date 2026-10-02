@@ -93,6 +93,12 @@ the textarea answered a deliberately broken page.
 
 ## Consequences
 
+*Since ADR 26 the page is no longer served by `Bun.serve`'s HTML bundler: it is
+built once with `render html`'s standalone pipeline and served as one string,
+and the server reports over stdout instead of through files. The two
+`Bun.build` details below are kept because the same traps apply to anything
+bundled for a browser.*
+
 Two `Bun.build` details are load-bearing, and both were discovered by the page
 failing rather than by reading documentation.
 

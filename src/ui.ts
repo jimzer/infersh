@@ -19,10 +19,13 @@ import {
 	Console,
 	Context,
 	Data,
+	Deferred,
 	Effect,
+	Fiber,
 	type FileSystem,
 	Layer,
 	Option,
+	Ref,
 	Schedule,
 	Schema,
 	type Scope,
@@ -30,7 +33,8 @@ import {
 } from "effect";
 import { ChildProcess, type ChildProcessSpawner } from "effect/process";
 import { escapeForScript, inlineScript } from "./html.ts";
-import { bareImports, isolateComposition } from "./render.ts";
+import { bareImports, buildStandalone, isolateComposition } from "./render.ts";
+import { prependToHead } from "./render-html.ts";
 import {
 	install,
 	type Platform,
@@ -228,10 +232,8 @@ export const buildPage = (options: {
 	readonly mode: "ask" | "present";
 	readonly title: string;
 	readonly data: unknown;
-	/** Tailwind's browser build, inlined so the page needs no network. */
-	readonly tailwindScript?: string;
 	readonly head?: string;
-	/** Link the CSS the page imported, which the HTML bundler then serves. */
+	/** Link the CSS the page imported, which the standalone build inlines. */
 	readonly stylesheet?: boolean;
 }): string => {
 	const dataJson =
@@ -242,11 +244,6 @@ export const buildPage = (options: {
 		`<title>${options.title.replace(/[<&]/g, "")}</title>`,
 		`<style>${BASE_CSS}</style>`,
 	];
-	// The same build `render` inlines, so a page can be styled with class names
-	// and nothing else. `--no-tailwind` skips it.
-	if (options.tailwindScript !== undefined) {
-		head.push(inlineScript(options.tailwindScript));
-	}
 	if (options.stylesheet) {
 		head.push('<link rel="stylesheet" href="./composition.css">');
 	}
@@ -457,44 +454,19 @@ const openInBrowser = (
 		stderr: "ignore",
 	}).pipe(Effect.ignore);
 
-/** What the child writes once it has bound a port. */
-const Ready = Schema.fromJsonString(Schema.Struct({ port: Schema.Finite }));
-
-/** What the child writes when the page answers, times out or is cancelled. */
-const Answer = Schema.fromJsonString(
-	Schema.Struct({
-		status: Schema.Literals(["submitted", "cancelled", "done", "timeout"]),
-		payload: Schema.optional(Schema.Unknown),
-	}),
-);
-
-/**
- * Waits for the child to report the port it actually bound.
- *
- * The file is read while the child may still be writing it, so a missing or
- * half-written file is simply retried — every 50 ms for up to 15 s, and only
- * while the child is still alive to write it.
- */
-const awaitReady = (
-	path: string,
-	isRunning: Effect.Effect<boolean>,
-): Effect.Effect<number, UiError, FileSystem.FileSystem> =>
-	Effect.gen(function* () {
-		const raw = yield* readFile(path);
-		return (yield* Schema.decodeUnknownEffect(Ready)(raw)).port;
-	}).pipe(
-		Effect.retry({
-			schedule: Schedule.spaced("50 millis"),
-			times: 300,
-			while: () => isRunning,
+/** One line the page server writes to stdout. */
+const Message = Schema.fromJsonString(
+	Schema.Union([
+		Schema.Struct({ type: Schema.Literal("ready"), port: Schema.Finite }),
+		Schema.Struct({
+			type: Schema.Literal("answer"),
+			status: Schema.Literals(["submitted", "cancelled", "done", "timeout"]),
+			payload: Schema.optional(Schema.Unknown),
 		}),
-		Effect.mapError(
-			() =>
-				new UiError({
-					reason: "The page server never came up; see the output above.",
-				}),
-		),
-	);
+	]),
+);
+type Message = typeof Message.Type;
+type Answer = Extract<Message, { type: "answer" }>;
 
 export const describeTimeout = (ms: number): string => {
 	const seconds = Math.round(ms / 1000);
@@ -514,34 +486,39 @@ const make = (platform: Context.Context<Platform>): UiShape => ({
 				dir,
 				request.tailwind ? [...app.deps, TAILWIND_PACKAGE] : app.deps,
 			);
-			// Inlined rather than linked, so every renderer embeds Tailwind the
-			// same way and a page never fetches it. See `docs/adrs/0020`.
-			const tailwindScript = request.tailwind
-				? yield* readFile(Bun.resolveSync(TAILWIND_NAME, dir))
-				: undefined;
+			const indexPath = join(dir, "index.html");
 			yield* writeFile(
-				join(dir, "index.html"),
+				indexPath,
 				buildPage({
 					token,
 					mode: request.mode,
 					title: request.title,
 					data: request.data,
-					tailwindScript,
 					head: request.head,
 					stylesheet: app.css,
 				}),
 			);
+			// The same standalone build `render html` uses: one file with the
+			// script, CSS and imported files inlined, served as one response.
+			const built = yield* buildStandalone(dir, indexPath);
+			// Added after the build, as render html does, so the bundler never
+			// parses Tailwind's 280 KB. See `docs/adrs/0020`.
+			const html = request.tailwind
+				? prependToHead(
+						built,
+						inlineScript(yield* readFile(Bun.resolveSync(TAILWIND_NAME, dir))),
+					)
+				: built;
+			const pagePath = join(dir, "page.html");
+			yield* writeFile(pagePath, html);
+
 			const childPath = join(dir, "ui-child.ts");
 			yield* writeFile(childPath, CHILD_SOURCE);
-
-			const readyPath = join(dir, "ready.json");
-			const resultPath = join(dir, "result.json");
 			const job = JSON.stringify({
 				token,
 				port: request.port,
 				timeoutMs: request.timeoutMs,
-				readyPath,
-				resultPath,
+				pagePath,
 			});
 			const started = Date.now();
 
@@ -552,12 +529,38 @@ const make = (platform: Context.Context<Platform>): UiShape => ({
 				// Held open and never written: the child exits when it closes,
 				// which happens even if this process is killed with -9.
 				stdin: "pipe",
-				stdout: "inherit",
+				// The protocol: one JSON line when listening, one with the answer.
+				stdout: "pipe",
 				stderr: "inherit",
 			});
-			const port = yield* awaitReady(
-				readyPath,
-				server.isRunning.pipe(Effect.orElseSucceed(() => false)),
+			const ready = yield* Deferred.make<number>();
+			const answer = yield* Ref.make(Option.none<Answer>());
+			const reader = yield* server.stdout.pipe(
+				Stream.decodeText(),
+				Stream.splitLines,
+				Stream.runForEach((line) =>
+					Option.match(Schema.decodeUnknownOption(Message)(line), {
+						onNone: () => Effect.void,
+						onSome: (message) =>
+							message.type === "ready"
+								? Deferred.succeed(ready, message.port)
+								: Ref.set(answer, Option.some(message)),
+					}),
+				),
+				Effect.forkScoped,
+			);
+			// Either the server reports its port, or it exits without doing so.
+			const port = yield* Effect.raceFirst(
+				Deferred.await(ready),
+				server.exitCode.pipe(
+					Effect.andThen(
+						Effect.fail(
+							new UiError({
+								reason: "The page server never came up; see the output above.",
+							}),
+						),
+					),
+				),
 			);
 
 			// Scoped like the server: the share ends when this run does.
@@ -580,16 +583,17 @@ const make = (platform: Context.Context<Platform>): UiShape => ({
 				);
 			}
 
-			const answer = yield* readFile(resultPath).pipe(
-				Effect.flatMap(Schema.decodeUnknownEffect(Answer)),
-				Effect.mapError(
-					() =>
-						new UiError({ reason: "The page server left no answer behind." }),
-				),
-			);
+			// Its stdout closes with it, so the reader has seen every line.
+			yield* Fiber.join(reader).pipe(Effect.ignore);
+			const result = yield* Ref.get(answer);
+			if (Option.isNone(result)) {
+				return yield* Effect.fail(
+					new UiError({ reason: "The page server left no answer behind." }),
+				);
+			}
 			return {
-				status: answer.status,
-				payload: answer.payload ?? null,
+				status: result.value.status,
+				payload: result.value.payload ?? null,
 				elapsedMs: Date.now() - started,
 				url,
 			};

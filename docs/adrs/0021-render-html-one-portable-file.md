@@ -90,6 +90,6 @@ yet because it would make html the slowest renderer instead of the fastest.
 **Against `ui`.** The two share the browser-bundling half but not their job:
 `ui` returns an answer and needs a live server; `render html` returns a file
 and needs nothing. A `ui` page cannot simply be exported, since its buttons
-post to a server that would not exist. `ui` could later reuse this standalone
-build and serve the resulting string, dropping its own `Bun.serve` HTML
-bundling and the install split recorded in ADR 16.
+post to a server that would not exist. `ui` now reuses this standalone build
+and serves the resulting string (ADR 26), which dropped its own `Bun.serve`
+HTML bundling.
