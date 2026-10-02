@@ -129,8 +129,12 @@ export const renderResult = (result: unknown): string =>
 /**
  * Builds the search engine URL that Bright Data will fetch.
  *
- * Mirrors the SDK's own `buildSERPUrl`, including `brd_json=1` for Google,
- * which makes Bright Data return a parsed SERP object rather than raw HTML.
+ * Mirrors the SDK's own `buildSERPUrl`, adding `brd_json=1` for Google and
+ * Bing, which makes Bright Data return a parsed SERP object rather than raw
+ * HTML. Yandex has no parsed form ("JSON output is not supported").
+ *
+ * Google no longer honours a result count (`num` is ignored), so none is sent:
+ * it returns about ten results a page, and the count is applied afterwards.
  */
 export const buildSerpUrl = (
 	engine: SearchEngine,
@@ -143,7 +147,7 @@ export const buildSerpUrl = (
 
 	switch (engine) {
 		case "bing": {
-			const base = `https://www.bing.com/search?q=${q}&count=${num}`;
+			const base = `https://www.bing.com/search?q=${q}&count=${num}&brd_json=1`;
 			return options.country
 				? `${base}&mkt=${lang}_${options.country.toUpperCase()}`
 				: base;
@@ -764,10 +768,10 @@ export const redditKeywordInput = (
 		const row: Record<string, unknown> = {
 			keyword,
 			num_of_posts: options.numOfPosts,
+			// Required by the API (absent and blank are both rejected), so the
+			// default is Reddit's own: no time limit.
+			date: options.date ?? "All time",
 		};
-		// The API rejects an empty string here, so the key is omitted entirely
-		// rather than sent blank.
-		if (options.date) row.date = options.date;
 		return row;
 	});
 

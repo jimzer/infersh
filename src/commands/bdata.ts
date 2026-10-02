@@ -387,7 +387,9 @@ const searchCmd = Command.make(
 		numResults: Flag.Int("num-results").pipe(
 			Flag.withMetavar("1-100"),
 			Flag.optional,
-			Flag.withDescription("How many results to return. Defaults to 10."),
+			Flag.withDescription(
+				"At most this many results. Defaults to 10. Google returns about ten a page whatever is asked, so page further with --start.",
+			),
 		),
 		start: Flag.Int("start").pipe(
 			Flag.withMetavar("n"),
@@ -426,7 +428,10 @@ const searchCmd = Command.make(
 					config.queries.length === 1 || !Array.isArray(result)
 						? [result]
 						: result;
-				const compacted = Option.all(pages.map(compactSerp));
+				const limit = options.numResults ?? 10;
+				const compacted = Option.all(
+					pages.map((page) => compactSerp(page, limit)),
+				);
 				if (Option.isSome(compacted)) {
 					const [first] = compacted.value;
 					if (config.queries.length === 1 && first !== undefined) {
@@ -444,7 +449,7 @@ const searchCmd = Command.make(
 					return yield* Console.log(renderResult(grouped));
 				}
 				yield* Console.error(
-					"Not a parsed Google results page (Bing, Yandex, a --data-format, or an error from Bright Data), so it is printed as returned.",
+					"Not a parsed results page (Yandex, a --data-format, or an error from Bright Data), so it is printed as returned.",
 				);
 			}
 
@@ -474,8 +479,9 @@ only the keys you name.
 
 --raw prints Bright Data's whole parsed results page instead —
 organic results under its own names (link, description), plus related
-searches, pagination and whatever panels Google showed. Bing and Yandex
-are not parsed, so they always print the page as returned.
+searches, pagination and whatever panels the engine showed. Google and
+Bing are parsed; Bright Data cannot parse Yandex, so it always prints
+the page as returned.
 
 Requires a Bright Data API key: run \`infer keys set\` or set
 BRIGHTDATA_API_KEY.`,
@@ -495,7 +501,7 @@ BRIGHTDATA_API_KEY.`,
 		},
 		{
 			command: `infer bdata search "pizza" --engine bing`,
-			description: "Search Bing (printed as returned)",
+			description: "Search Bing instead of Google",
 		},
 		{
 			command: `infer bdata search "pizza" --country gb --num-results 20`,
@@ -1063,7 +1069,7 @@ const redditSearchCmd = Command.make(
 		date: Flag.Literals("date", REDDIT_DATES).pipe(
 			Flag.optional,
 			Flag.withDescription(
-				"How far back to search. Omit to let Reddit choose its default window.",
+				"How far back to search. Defaults to All time, as on Reddit.",
 			),
 		),
 		raw: rawFlag,

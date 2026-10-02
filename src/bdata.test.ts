@@ -133,7 +133,7 @@ describe("buildSerpUrl", () => {
 
 	test("builds a Bing URL with the market only when a country is given", () => {
 		expect(buildSerpUrl("bing", "pizza", { numResults: 25 })).toBe(
-			"https://www.bing.com/search?q=pizza&count=25",
+			"https://www.bing.com/search?q=pizza&count=25&brd_json=1",
 		);
 		expect(buildSerpUrl("bing", "pizza", { country: "gb" })).toContain(
 			"mkt=en_GB",
@@ -408,9 +408,9 @@ describe("redditKeywordInput", () => {
 		}
 	});
 
-	test("omits date entirely rather than sending it blank, which is rejected", () => {
+	test("defaults date to All time, since absent and blank are rejected", () => {
 		const [row] = redditKeywordInput(["effect"], { numOfPosts: 5 });
-		expect(row).not.toHaveProperty("date");
+		expect(row).toHaveProperty("date", "All time");
 	});
 
 	test("passes a date window through exactly as spelled", () => {

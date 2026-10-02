@@ -233,7 +233,7 @@ const Organic = Schema.Struct({
 	extensions: lenient(Schema.Array(Schema.Unknown)),
 });
 
-/** Google's parsed SERP, as `brd_json=1` returns it. */
+/** Google's or Bing's parsed SERP, as `brd_json=1` returns it. */
 const Serp = Schema.Struct({ organic: Schema.Array(Schema.Unknown) });
 
 /** `--format json` wraps the same SERP as a JSON string in `body`. */
@@ -264,12 +264,13 @@ const dateOf = (
 const decodeOrganic = Schema.decodeUnknownOption(Organic);
 
 /**
- * The organic results of one search, as `{title, url, snippet, date}`, or
- * `None` when the result is not a parsed SERP — Bing and Yandex pages, or a
- * `--data-format` other than the default.
+ * The first `limit` organic results of one search, as
+ * `{title, url, snippet, date}`, or `None` when the result is not a parsed
+ * SERP — a Yandex page, or a `--data-format` other than the default.
  */
 export const compactSerp = (
 	result: unknown,
+	limit = Number.POSITIVE_INFINITY,
 ): Option.Option<ReadonlyArray<Record<string, unknown>>> =>
 	Schema.decodeUnknownOption(Serp)(result).pipe(
 		Option.orElse(() =>
@@ -279,7 +280,7 @@ export const compactSerp = (
 			),
 		),
 		Option.map((serp) =>
-			serp.organic.flatMap((item) =>
+			serp.organic.slice(0, limit).flatMap((item) =>
 				Option.toArray(
 					Option.map(decodeOrganic(item), (organic) => {
 						const record: Record<string, unknown> = {

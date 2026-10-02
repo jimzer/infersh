@@ -352,6 +352,12 @@ describe("compactSerp", () => {
 		expect(SEARCH_RESULT_SUMMARY).toBe("{title, url, snippet, date}");
 	});
 
+	test("keeps at most the requested number of results", () => {
+		expect(
+			Option.map(compactSerp(serp, 1), (results) => results.length),
+		).toEqual(Option.some(1));
+	});
+
 	test("reads a relative date too", () => {
 		const recent = {
 			organic: [
@@ -376,7 +382,7 @@ describe("compactSerp", () => {
 	});
 
 	test("declines a page it cannot read, so the caller prints it as is", () => {
-		expect(compactSerp("<html>Bing</html>")).toEqual(Option.none());
+		expect(compactSerp("<html>Yandex</html>")).toEqual(Option.none());
 		expect(compactSerp({ body: "# markdown" })).toEqual(Option.none());
 	});
 });

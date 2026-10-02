@@ -23,7 +23,7 @@ worth reading, under short names. `--help` on each command shows its shape.
 
 | command | one result |
 | --- | --- |
-| `search` (Google) | `{title, url, snippet, date}` |
+| `search` (Google, Bing) | `{title, url, snippet, date}` |
 | `youtube discover` | `{title, url, channel, views, likes, published, duration}` |
 | `youtube comments` | `{text, author, likes, replies, date}` |
 | `x profile` | `{text, url, author, date, likes, reposts, replies, views}` |
@@ -67,12 +67,13 @@ For pages a plain fetch cannot get — anti-bot protection, geo-gating, heavy JS
 Returns the organic results of the search engine results page, not a curated
 answer.
 
-- Google prints `[{title, url, snippet, date}]`; several queries print
+- Google and Bing print `[{title, url, snippet, date}]`; several queries print
   `[{query, results}]`. `--raw` gives the whole parsed page (related searches,
   panels).
-- `--engine google|bing|yandex`, default google. Bing and Yandex are not
-  parsed and print the page as returned.
-- `--num-results` defaults to 10, capped at 100.
+- `--engine google|bing|yandex`, default google. Yandex cannot be parsed and
+  prints the page as returned (raw HTML).
+- `--num-results` defaults to 10 and is a maximum: Google returns about ten
+  results a page whatever is asked, so use `--start 10` for the next page.
 - Several queries in one call run in parallel.
 
 ## youtube

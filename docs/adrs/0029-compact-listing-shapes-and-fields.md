@@ -87,16 +87,18 @@ Things learned from the live responses while defining the shapes:
   not parsed.
 - **`search --format json` wraps the same SERP as a JSON string in `body`**,
   so compacting decodes it with `Schema.fromJsonString` rather than treating it
-  as a different shape. Bing and Yandex are not requested with `brd_json=1`, so
-  they are not parsed and print as returned, with a note on stderr.
+  as a different shape. Bing is now requested with `brd_json=1` too and
+  compacts the same way (#13). Bright Data answers "JSON output is not
+  supported" for Yandex, so Yandex prints as returned, with a note on stderr.
 - **A throttled SERP query comes back as plain text with a 200**: "This query
   recently failed and cannot be attempted at this time…". It is not a parsed
   page, so it too prints as returned rather than as an empty list.
 - **Google ignores `--num-results`.** `--num-results 3` returned 8 organic
-  results; the Google URL builder never sends a count. Not changed here.
+  results. Google itself no longer honours `num`, so the compact list is now
+  cut to `--num-results` and paging is `--start` (#11).
 - **`reddit search` without `--date` is now rejected** with `date: Required
   field`, although the code omits the key because an empty string was once
-  rejected too. Not changed here; pass `--date`.
+  rejected too. It now defaults to "All time", Reddit's own default (#12).
 - ChatGPT's `additional_answer_text` holds filler ("ChatGPT said: No internet
   This may take a while…") when there was no follow-up, so the compact shape
   keeps it only alongside `followUp`.
