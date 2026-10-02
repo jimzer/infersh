@@ -10,11 +10,11 @@ import { bdataCmd } from "./commands/bdata.ts";
 import { budgetCmd } from "./commands/budget.ts";
 import { falCmd } from "./commands/fal.ts";
 import { groqCmd } from "./commands/groq.ts";
+import { humanCmd } from "./commands/human.ts";
 import { keysCmd } from "./commands/keys.ts";
 import { openrouterCmd } from "./commands/openrouter.ts";
 import { renderCmd } from "./commands/render.ts";
 import { skillsCmd } from "./commands/skills.ts";
-import { uiCmd } from "./commands/ui.ts";
 import { updateCmd } from "./commands/update.ts";
 import * as Fal from "./fal.ts";
 import * as Groq from "./groq.ts";
@@ -55,11 +55,11 @@ const inferCmd = Command.make("infer").pipe(
 		budgetCmd,
 		falCmd,
 		groqCmd,
+		humanCmd,
 		keysCmd,
 		openrouterCmd,
 		renderCmd,
 		skillsCmd,
-		uiCmd,
 		updateCmd,
 	]),
 );

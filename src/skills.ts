@@ -5,7 +5,7 @@
  * skill is versioned with the CLI: `infer update` brings a newer one along.
  */
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { Context, Data, Effect, Layer } from "effect";
 // @ts-expect-error text import: Bun inlines the file contents as a string
@@ -15,6 +15,8 @@ import falMd from "./skills/references/fal.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import groqMd from "./skills/references/groq.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
+import humanMd from "./skills/references/human.md" with { type: "text" };
+// @ts-expect-error text import: Bun inlines the file contents as a string
 import openrouterMd from "./skills/references/openrouter.md" with {
 	type: "text",
 };
@@ -22,8 +24,6 @@ import openrouterMd from "./skills/references/openrouter.md" with {
 import remotionMd from "./skills/references/remotion.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import renderMd from "./skills/references/render.md" with { type: "text" };
-// @ts-expect-error text import: Bun inlines the file contents as a string
-import uiMd from "./skills/references/ui.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import skillMd from "./skills/SKILL.md" with { type: "text" };
 
@@ -50,8 +50,18 @@ export const SKILL_FILES: ReadonlyArray<{
 	{ path: "references/bdata.md", contents: bdataMd as string },
 	{ path: "references/openrouter.md", contents: openrouterMd as string },
 	{ path: "references/groq.md", contents: groqMd as string },
-	{ path: "references/ui.md", contents: uiMd as string },
+	{ path: "references/human.md", contents: humanMd as string },
 ];
+
+/**
+ * Files earlier versions of the skill shipped and this one does not.
+ *
+ * Installing over an older skill would otherwise leave them in place, still
+ * describing commands that no longer exist — `references/ui.md` documents
+ * `infer ui`, renamed `infer human`. Only these exact paths are removed;
+ * anything else in the skill directory is left alone.
+ */
+export const RETIRED_FILES: ReadonlyArray<string> = ["references/ui.md"];
 
 /**
  * Where the skill should go, and whether the user has to be asked first.
@@ -106,6 +116,8 @@ export interface InstallResult {
 	readonly skillDir: string;
 	readonly written: ReadonlyArray<string>;
 	readonly skipped: ReadonlyArray<string>;
+	/** Retired files from an older skill, removed so they cannot mislead. */
+	readonly removed: ReadonlyArray<string>;
 }
 
 export interface SkillsShape {
@@ -146,7 +158,19 @@ const make = (): SkillsShape => ({
 				written.push(file.path);
 			}
 
-			return { skillDir: dir, written, skipped };
+			const removed: string[] = [];
+			for (const path of RETIRED_FILES) {
+				const target = join(dir, path);
+				if (!existsSync(target)) continue;
+				yield* Effect.try({
+					try: () => rmSync(target),
+					catch: (cause) =>
+						new SkillsError({ reason: `Could not remove ${target}: ${cause}` }),
+				});
+				removed.push(path);
+			}
+
+			return { skillDir: dir, written, skipped, removed };
 		}),
 });
 

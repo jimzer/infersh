@@ -32,7 +32,7 @@ already does that and cannot go stale.
 | `infer bdata` | Bright Data: scrape, search, YouTube, X, Reddit, LinkedIn, ChatGPT | [bdata.md](references/bdata.md) |
 | `infer openrouter` | find any model and run a prompt through it, with JSON-schema output | [openrouter.md](references/openrouter.md) |
 | `infer groq` | Groq Whisper speech-to-text | [groq.md](references/groq.md) |
-| `infer ui` | show the user a page and get their answer back | [ui.md](references/ui.md) |
+| `infer human` | ask the human: show them a page and get their answer back | [human.md](references/human.md) |
 
 Read the reference file for the area you are working in. Do not read all of
 them.
@@ -55,7 +55,7 @@ infer keys set     # store them interactively (needs a terminal)
 infer keys rm fal  # forget a stored key
 ```
 
-`infer render` and `infer ui` need no key at all. If a command fails with "No … API key
+`infer render` and `infer human` need no key at all. If a command fails with "No … API key
 found", say so rather than trying to work around it — the user has to supply
 the key.
 

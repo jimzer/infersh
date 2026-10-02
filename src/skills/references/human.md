@@ -1,10 +1,10 @@
-# infer ui
+# infer human
 
 Show the user a real web page in their browser, and get an answer back.
 
 ```bash
-infer ui ask ./pick.tsx --data posts.json      # they answer; you get their JSON
-infer ui present ./report.tsx --data run.json  # they read; you get "done"
+infer human ask ./pick.tsx --data posts.json      # they answer; you get their JSON
+infer human present ./report.tsx --data run.json  # they read; you get "done"
 ```
 
 Needs no API key. The page is a `.tsx` file you write; everything else —
@@ -87,8 +87,8 @@ as `infer.data`. Put the content there and the *same* page works for every
 run:
 
 ```bash
-infer ui ask ./pick.tsx --data '{"posts":[...]}'
-infer ui ask ./pick.tsx --data drafts.json
+infer human ask ./pick.tsx --data '{"posts":[...]}'
+infer human ask ./pick.tsx --data drafts.json
 ```
 
 Writing twenty drafts into the `.tsx` instead means regenerating the page every
@@ -131,7 +131,7 @@ Add `--share` only when the user will open the page on **another device** — a
 phone, another laptop:
 
 ```bash
-infer ui ask ./pick.tsx --data posts.json --share
+infer human ask ./pick.tsx --data posts.json --share
 ```
 
 It publishes through `tailscale serve` in the foreground, giving an HTTPS URL

@@ -1,5 +1,8 @@
 # 16. `infer ui` blocks, so the parent owns the server
 
+*Renamed `infer human` on 2026-10-02: the command asks the human, the way
+every other command asks a provider. `ui` described how, not what.*
+
 - Status: accepted
 - Date: 2026-07-31
 

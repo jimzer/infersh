@@ -126,6 +126,7 @@ const addCmd = Command.make(
 					skillDir: result.skillDir,
 					written: result.written,
 					skipped: result.skipped,
+					removed: result.removed,
 				});
 			}
 
@@ -134,6 +135,9 @@ const addCmd = Command.make(
 			}
 			for (const file of result.skipped) {
 				yield* Console.error(`  kept     ${file}`);
+			}
+			for (const file of result.removed) {
+				yield* Console.error(`  removed  ${file} (retired)`);
 			}
 			if (result.skipped.length > 0) {
 				yield* Console.error("\nPass --force to overwrite the kept files.");

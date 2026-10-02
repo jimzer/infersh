@@ -86,8 +86,8 @@ left for the browser to fetch.
 - **Pick html over image/pdf** when the reader should interact: explore data,
   switch views, expand details. Pick image/pdf for something fixed to look at
   or print.
-- **Pick html over `infer ui`** when the result is a file to keep or hand to
-  someone. `ui` is for asking the user a question and getting an answer back;
+- **Pick html over `infer human`** when the result is a file to keep or hand to
+  someone. `infer human` is for asking the user a question and getting an answer back;
   it needs the CLI running. html needs nothing once written.
 - Expect a few hundred KB before any assets — React (~216 KB) and Tailwind
   (~280 KB) are both inside. `--no-tailwind` drops the latter.

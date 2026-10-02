@@ -1,9 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Effect } from "effect";
+import {
 	findAncestorClaude,
+	layer,
 	planTarget,
+	RETIRED_FILES,
 	SKILL_FILES,
 	SKILL_NAME,
+	Skills,
 	skillDir,
 } from "./skills.ts";
 
@@ -106,5 +119,35 @@ describe("SKILL_FILES", () => {
 			if (file.path === "SKILL.md") continue;
 			expect(entry).toContain(file.path);
 		}
+	});
+});
+
+describe("install", () => {
+	test("removes files an older skill shipped, and nothing else", async () => {
+		const claudeDir = mkdtempSync(join(tmpdir(), "infer-skill-"));
+		try {
+			const dir = skillDir(claudeDir);
+			mkdirSync(join(dir, "references"), { recursive: true });
+			writeFileSync(join(dir, "references", "ui.md"), "# infer ui");
+			writeFileSync(join(dir, "references", "mine.md"), "the user's own");
+
+			const result = await Effect.runPromise(
+				Effect.gen(function* () {
+					return yield* (yield* Skills).install(claudeDir, false);
+				}).pipe(Effect.provide(layer)),
+			);
+
+			expect(result.removed).toEqual(["references/ui.md"]);
+			expect(existsSync(join(dir, "references", "ui.md"))).toBe(false);
+			expect(existsSync(join(dir, "references", "mine.md"))).toBe(true);
+			expect(existsSync(join(dir, "references", "human.md"))).toBe(true);
+		} finally {
+			rmSync(claudeDir, { recursive: true, force: true });
+		}
+	});
+
+	test("never retires a file it still ships", () => {
+		const shipped = new Set(SKILL_FILES.map((file) => file.path));
+		for (const path of RETIRED_FILES) expect(shipped.has(path)).toBe(false);
 	});
 });

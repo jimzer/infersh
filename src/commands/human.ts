@@ -1,5 +1,5 @@
 /**
- * `infer ui` — show the user a page and wait for what they do with it.
+ * `infer human` — ask the human: show them a page and wait for what they do.
  */
 
 import { resolve } from "node:path";
@@ -170,9 +170,20 @@ const presentCmd = Command.make(
 	),
 );
 
-export const uiCmd = Command.make("ui").pipe(
+export const humanCmd = Command.make("human").pipe(
+	Command.withShortDescription(
+		"Ask the human: show them a page and get their answer back.",
+	),
 	Command.withDescription(
-		"Show the user a real web page and get an answer back. The page is a .tsx file rendered in their browser; it can be opened on a phone with --share.",
+		`Ask the human, through a real web page, and get their answer back.
+
+Every other command answers from a provider; this one answers from the
+person at the keyboard. The page is a .tsx file opened in their browser,
+and the command blocks until they act on it, so the answer is theirs.
+
+ask waits for them to submit something; present waits until they have
+read the page. The page opens on this computer by default; add --share
+to open it on another device, such as a phone.`,
 	),
 	Command.withSubcommands([askCmd, presentCmd]),
 );
