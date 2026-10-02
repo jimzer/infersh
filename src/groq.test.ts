@@ -91,7 +91,7 @@ describe("ffmpegArgs", () => {
 			"-ac",
 			"1",
 			"-map",
-			"0:a",
+			"0:a:0",
 			"-c:a",
 			"flac",
 			"-y",

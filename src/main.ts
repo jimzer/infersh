@@ -13,6 +13,7 @@ import { falCmd } from "./commands/fal.ts";
 import { groqCmd } from "./commands/groq.ts";
 import { humanCmd } from "./commands/human.ts";
 import { keysCmd } from "./commands/keys.ts";
+import { mediaCmd } from "./commands/media.ts";
 import { openrouterCmd } from "./commands/openrouter.ts";
 import { renderCmd } from "./commands/render.ts";
 import { shotCmd } from "./commands/shot.ts";
@@ -60,6 +61,7 @@ const inferCmd = Command.make("infer").pipe(
 		groqCmd,
 		humanCmd,
 		keysCmd,
+		mediaCmd,
 		openrouterCmd,
 		renderCmd,
 		shotCmd,

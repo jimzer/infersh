@@ -127,6 +127,19 @@ infer each urls.jsonl -c 8 -- infer bdata scrape {url} --data-format markdown --
 
 Runs a command once per JSONL row, filling `{field}` from the row without a shell, and prints one line per row: the row and its result or error. Successes are kept, so re-running the same line runs only the rows that are missing or failed; `--fresh` runs everything again.
 
+### Media
+
+```bash
+infer media info clip.mov                          # duration, size, codecs, fps as JSON
+infer media web screen.mov                         # MP4 that plays everywhere
+infer media gif demo.mp4 --from 3 --to 7           # palette GIF, not banded
+infer media trim talk.mp4 --from 1:30 --to 2:15    # frame-accurate cut
+infer media frames clip.mp4                        # contact sheet of 12 labelled frames
+infer media audio meeting.mkv --for-transcription  # 16 kHz mono FLAC
+```
+
+Needs `ffmpeg` and `ffprobe` on PATH; for anything else, use ffmpeg directly.
+
 ### Skills
 
 ```bash

@@ -35,6 +35,7 @@ already does that and cannot go stale.
 | `infer shot` | screenshot or print a live URL, localhost included | [render.md](references/render.md) |
 | `infer human` | ask the human: pick, approve, rank, edit, a form, or any page you write | [human.md](references/human.md) |
 | `infer each` | run any command once per JSONL row, resumably — rows that succeeded are never re-run | [each.md](references/each.md) |
+| `infer media` | ffmpeg jobs done right: info, web MP4, GIF, frame-accurate trim, contact sheet, audio | [media.md](references/media.md) |
 
 Read the reference file for the area you are working in. Do not read all of
 them.
