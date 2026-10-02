@@ -33,7 +33,12 @@ import {
 } from "effect";
 import { ChildProcess, type ChildProcessSpawner } from "effect/process";
 import { escapeForScript, inlineScript } from "./html.ts";
-import { bareImports, buildStandalone, isolateComposition } from "./render.ts";
+import {
+	bareImports,
+	buildStandalone,
+	type CompositionSource,
+	isolateComposition,
+} from "./render.ts";
 import { prependToHead } from "./render-html.ts";
 import {
 	install,
@@ -72,7 +77,8 @@ export interface UiResult {
 }
 
 export interface UiRequest {
-	readonly appPath: string;
+	/** The page: a `.tsx` file, or the source of a built-in page. */
+	readonly app: CompositionSource;
 	/** `present` injects a Done button and expects no `infer.submit` call. */
 	readonly mode: "ask" | "present";
 	readonly data: unknown;
@@ -284,11 +290,12 @@ export interface FlattenedApp {
  * exist there, and every page would die with "jsxDEV is not a function".
  */
 export const flattenApp = (
-	appPath: string,
+	app: string | CompositionSource,
 	dir: string,
 ): Effect.Effect<FlattenedApp, UiError, FileSystem.FileSystem> =>
 	Effect.gen(function* () {
-		const isolated = yield* isolateComposition({ path: appPath }, dir, {
+		const source = typeof app === "string" ? { path: app } : app;
+		const isolated = yield* isolateComposition(source, dir, {
 			target: "browser",
 			productionJsx: true,
 			inlineImports: true,
@@ -481,7 +488,7 @@ const make = (platform: Context.Context<Platform>): UiShape => ({
 		function* (request: UiRequest) {
 			const dir = yield* tempDir("infer-ui-");
 			const token = newToken();
-			const app = yield* flattenApp(request.appPath, dir);
+			const app = yield* flattenApp(request.app, dir);
 			yield* install(
 				dir,
 				request.tailwind ? [...app.deps, TAILWIND_PACKAGE] : app.deps,

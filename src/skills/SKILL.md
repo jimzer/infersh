@@ -32,7 +32,7 @@ already does that and cannot go stale.
 | `infer bdata` | Bright Data: scrape, search, YouTube, X, Reddit, LinkedIn, ChatGPT | [bdata.md](references/bdata.md) |
 | `infer openrouter` | find any model and run a prompt through it, with JSON-schema output | [openrouter.md](references/openrouter.md) |
 | `infer groq` | Groq Whisper speech-to-text | [groq.md](references/groq.md) |
-| `infer human` | ask the human: show them a page and get their answer back | [human.md](references/human.md) |
+| `infer human` | ask the human: pick, approve, rank, edit, a form, or any page you write | [human.md](references/human.md) |
 
 Read the reference file for the area you are working in. Do not read all of
 them.

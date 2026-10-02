@@ -1,14 +1,45 @@
 # infer human
 
-Show the user a real web page in their browser, and get an answer back.
+Ask the person at the keyboard, through a real web page, and get their answer
+back. Needs no API key.
+
+## Reach for a built-in page first
+
+Most questions have one of five shapes, and those need **no page code** — pass
+the data and get the answer:
+
+```bash
+infer human pick    --items drafts.json --label title --detail body --multi   # {"picked":[<id>,…]}
+infer human approve --items findings.json --label title --detail why          # {"decisions":[{"id","approved","note"?},…]}
+infer human rank    --items titles.json --label title                         # {"order":[<id>,…]}
+infer human edit    --text draft.md                                           # {"text":"…"}
+infer human form    --fields form.json                                        # {"values":{"<name>":…}}
+```
+
+- `--items` is any JSON array, inline or a path. Strings show as they are;
+  objects show `--label` (or their first string field), with `--detail` beneath
+  and `--image` beside — a URL, or a local path, which is embedded.
+- Answers name items by `--id` (a field), or by position from 0 when it is not
+  given. Pass `--id` whenever items have a stable key, so the answer does not
+  depend on list order.
+- `--prompt` is the question at the top of the page — say what the choice is
+  *for*: "Which should I post today?", not "Pick".
+- `pick` is one item unless `--multi`; `approve` needs a verdict on every item;
+  `rank` uses up/down buttons, so it works on a phone; `edit` never modifies the
+  file it read; `form` fields are `text`, `textarea`, `number`, `select` (with
+  `options`) or `checkbox`, and `required` ones must be filled.
+- The output is the same as `ask`: `{status, payload, elapsedMs, url}`. Only
+  `submitted` carries an answer.
+
+Write a page of your own only when none of the five fits:
 
 ```bash
 infer human ask ./pick.tsx --data posts.json      # they answer; you get their JSON
 infer human present ./report.tsx --data run.json  # they read; you get "done"
 ```
 
-Needs no API key. The page is a `.tsx` file you write; everything else —
-bundling, serving, the URL, the round trip — is handled.
+The page is a `.tsx` file you write; everything else — bundling, serving, the
+URL, the round trip — is handled.
 
 ## What it is for
 
