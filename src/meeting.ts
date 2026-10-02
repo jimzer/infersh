@@ -17,6 +17,7 @@ import {
 	Effect,
 	FileSystem,
 	Option,
+	Ref,
 	Schema,
 	Stream,
 } from "effect";
@@ -44,6 +45,11 @@ const CaptureMessage = Schema.Union([
 	Schema.Struct({ type: Schema.Literal("stopped") }),
 	Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
 	Schema.Struct({ type: Schema.Literal("warning"), message: Schema.String }),
+	Schema.Struct({
+		type: Schema.Literal("level"),
+		mic: Schema.Number,
+		system: Schema.Number,
+	}),
 ]);
 const decodeMessage = Schema.decodeUnknownOption(
 	Schema.fromJsonString(CaptureMessage),
@@ -54,6 +60,56 @@ const CaptureInfo = Schema.Struct({
 	systemStart: Schema.optionalKey(Schema.Number),
 	micStart: Schema.optionalKey(Schema.Number),
 });
+
+// --- Level meter -------------------------------------------------------------
+
+/** Quieter than this counts as silence: room noise sits around -60 to -55. */
+const SILENCE_DB = -50;
+/** A track silent this long is flagged, in case it is not being captured. */
+const SILENCE_WARN_MS = 30_000;
+
+const clock = (seconds: number): string => {
+	const total = Math.max(0, Math.floor(seconds));
+	const h = Math.floor(total / 3600);
+	const m = Math.floor((total % 3600) / 60);
+	const s = total % 60;
+	const pad = (n: number) => String(n).padStart(2, "0");
+	return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+};
+
+const bar = (decibels: number, cells: number): string => {
+	const filled = Math.round(
+		Math.min(1, Math.max(0, (decibels + 60) / 60)) * cells,
+	);
+	return `\x1b[32m${"█".repeat(filled)}\x1b[2m${"·".repeat(cells - filled)}\x1b[0m`;
+};
+
+export interface MeterTrack {
+	readonly label: string;
+	readonly decibels: number;
+	/** How long the track has been below the silence threshold. */
+	readonly silentMs: number;
+}
+
+/**
+ * One status line: elapsed time and a bar per track, with a track that has
+ * been silent for a while called out — the sign it may not be captured.
+ */
+export const meterLine = (
+	elapsedMs: number,
+	tracks: ReadonlyArray<MeterTrack>,
+	columns: number,
+): string => {
+	const cells = columns >= 80 ? 16 : 8;
+	const parts = tracks.map((track) => {
+		const note =
+			track.silentMs >= SILENCE_WARN_MS
+				? ` \x1b[33msilent ${clock(track.silentMs / 1000)}\x1b[0m`
+				: "";
+		return `${track.label} ${bar(track.decibels, cells)}${note}`;
+	});
+	return `\x1b[31m●\x1b[0m ${clock(elapsedMs / 1000)}  ${parts.join("  ")}`;
+};
 
 /** Compiles the capture helper once per version of its source. */
 const helper = Effect.gen(function* () {
@@ -124,6 +180,9 @@ const enterOrCtrlC = Effect.callback<void>((resume) => {
 
 export interface RecordOptions {
 	readonly dir: string;
+	/** Labels for the meter; the transcript sets its own. */
+	readonly me: string;
+	readonly them: string;
 	/** Stop after this long; otherwise on Enter or Ctrl-C. */
 	readonly durationMs?: number;
 }
@@ -146,6 +205,49 @@ export const record = Effect.fn("Meeting.record")(function* (
 
 	const started = yield* Deferred.make<void, MeetingError>();
 	const stopped = yield* Deferred.make<void, MeetingError>();
+	// The meter redraws one line in place, so only on a terminal; it is off
+	// until recording starts and after it stops.
+	const live = process.stderr.isTTY === true;
+	const meter = yield* Ref.make(
+		Option.none<{ began: number; micLoud: number; systemLoud: number }>(),
+	);
+	const drawLevels = (mic: number, system: number) =>
+		Ref.get(meter).pipe(
+			Effect.flatMap(
+				Option.match({
+					onNone: () => Effect.void,
+					onSome: (state) =>
+						Effect.gen(function* () {
+							const now = Date.now();
+							const next = {
+								...state,
+								micLoud: mic > SILENCE_DB ? now : state.micLoud,
+								systemLoud: system > SILENCE_DB ? now : state.systemLoud,
+							};
+							yield* Ref.set(meter, Option.some(next));
+							const line = meterLine(
+								now - state.began,
+								[
+									{
+										label: options.me,
+										decibels: mic,
+										silentMs: now - next.micLoud,
+									},
+									{
+										label: options.them,
+										decibels: system,
+										silentMs: now - next.systemLoud,
+									},
+								],
+								process.stderr.columns ?? 80,
+							);
+							yield* Effect.sync(() =>
+								process.stderr.write(`\r\x1b[2K${line}`),
+							);
+						}),
+				}),
+			),
+		);
 	yield* capture.stdout.pipe(
 		Stream.decodeText(),
 		Stream.splitLines,
@@ -160,6 +262,10 @@ export const record = Effect.fn("Meeting.record")(function* (
 							return Deferred.succeed(stopped, undefined);
 						case "warning":
 							return Console.error(`warning: ${message.message}`);
+						case "level":
+							return live
+								? drawLevels(message.mic, message.system)
+								: Effect.void;
 						case "error": {
 							const error = new MeetingError({ reason: message.message });
 							return Effect.all([
@@ -192,16 +298,22 @@ export const record = Effect.fn("Meeting.record")(function* (
 	);
 	const began = Date.now();
 	yield* Console.error(
-		`● Recording mic + system audio to ${options.dir}\n  ${
+		`Recording mic + system audio to ${options.dir}\n${
 			options.durationMs === undefined
 				? "Press Enter or Ctrl-C to stop."
 				: `Stopping after ${Math.round(options.durationMs / 1000)} s (Enter or Ctrl-C stops sooner).`
 		}`,
 	);
+	yield* Ref.set(
+		meter,
+		Option.some({ began, micLoud: began, systemLoud: began }),
+	);
 	yield* options.durationMs === undefined
 		? enterOrCtrlC
 		: Effect.raceFirst(enterOrCtrlC, Effect.sleep(options.durationMs));
 
+	yield* Ref.set(meter, Option.none());
+	if (live) yield* Effect.sync(() => process.stderr.write("\r\x1b[2K"));
 	yield* Stream.make(new TextEncoder().encode("stop\n")).pipe(
 		Stream.run(capture.stdin),
 		Effect.ignore,
@@ -310,15 +422,6 @@ export const mergeTracks = (
 		} else merged.push(turn);
 	}
 	return merged;
-};
-
-const clock = (seconds: number): string => {
-	const total = Math.max(0, Math.floor(seconds));
-	const h = Math.floor(total / 3600);
-	const m = Math.floor((total % 3600) / 60);
-	const s = total % 60;
-	const pad = (n: number) => String(n).padStart(2, "0");
-	return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 };
 
 export const formatTranscript = (turns: ReadonlyArray<Turn>): string =>

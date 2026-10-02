@@ -89,6 +89,8 @@ export const meetingCmd = Command.make(
 				yield* Effect.scoped(
 					record({
 						dir,
+						me: config.me,
+						them: config.them,
 						durationMs: Option.getOrUndefined(
 							Option.map(config.duration, (minutes) => minutes * 60_000),
 						),

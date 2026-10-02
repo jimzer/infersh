@@ -4,7 +4,8 @@
 // Writes <dir>/system.caf and <dir>/mic.caf as it goes, so a crash keeps what
 // was recorded. Prints one JSON line on stdout when recording starts, and one
 // when it stops: on "stop", end of stdin, or SIGTERM. The stop line is also
-// written to <dir>/capture.json, for transcribing later. SIGINT is ignored —
+// written to <dir>/capture.json, for transcribing later. While recording,
+// a "level" line every 150 ms gives each track's loudest moment in dBFS. SIGINT is ignored —
 // the parent decides when to stop — so Ctrl-C cannot cut a file short.
 
 import AVFoundation
@@ -32,6 +33,8 @@ final class Track {
 	var file: AVAudioFile?
 	var start: Double?
 	var frames: Int64 = 0
+	/** Loudest RMS since the last level report, read and reset on the queue. */
+	var peak: Float = 0
 	init(_ url: URL) { self.url = url }
 
 	func write(_ buffer: CMSampleBuffer) {
@@ -55,6 +58,11 @@ final class Track {
 			}
 			try file?.write(from: pcm)
 			frames += Int64(count)
+			if let samples = pcm.floatChannelData?[0] {
+				var sum: Float = 0
+				for i in 0..<Int(count) { sum += samples[i] * samples[i] }
+				peak = max(peak, (sum / Float(count)).squareRoot())
+			}
 		} catch {
 			emit(["type": "warning", "message": "\(url.lastPathComponent): \(error.localizedDescription)"])
 		}
@@ -81,6 +89,7 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
 let recorder = Recorder()
 var stream: SCStream?
+var meter: DispatchSourceTimer?
 
 Task {
 	do {
@@ -103,6 +112,22 @@ Task {
 		try await s.startCapture()
 		stream = s
 		emit(["type": "started"])
+		let levels = DispatchSource.makeTimerSource(queue: recorder.queue)
+		levels.schedule(deadline: .now(), repeating: .milliseconds(150))
+		levels.setEventHandler {
+			let decibels = { (rms: Float) -> Double in
+				Double(max(-60, 20 * log10(max(rms, 1e-6))))
+			}
+			emit([
+				"type": "level",
+				"mic": decibels(recorder.mic.peak),
+				"system": decibels(recorder.system.peak),
+			])
+			recorder.mic.peak = 0
+			recorder.system.peak = 0
+		}
+		levels.resume()
+		meter = levels
 	} catch {
 		fail("Could not start recording: \(error.localizedDescription). Allow your terminal under System Settings > Privacy & Security > Screen & System Audio Recording, and Microphone, then run again.")
 	}
@@ -110,6 +135,7 @@ Task {
 
 func stop() {
 	Task {
+		meter?.cancel()
 		try? await stream?.stopCapture()
 		recorder.queue.sync {
 			let system = recorder.system, mic = recorder.mic
