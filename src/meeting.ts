@@ -406,6 +406,16 @@ export const transcribe = Effect.fn("Meeting.transcribe")(function* (
 					.pipe(
 						Effect.mapError((e) => new MeetingError({ reason: e.message })),
 					);
+				// Groq's own response, kept per track: the raw material, with
+				// every segment's timing and confidence, before any merging.
+				yield* fs
+					.writeFileString(
+						join(options.dir, `${track.name}.transcript.json`),
+						body,
+					)
+					.pipe(
+						Effect.mapError((e) => new MeetingError({ reason: e.message })),
+					);
 				const parsed = yield* Schema.decodeUnknownEffect(Verbose)(body).pipe(
 					Effect.mapError(
 						() =>

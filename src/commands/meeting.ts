@@ -1,5 +1,5 @@
 /**
- * `infer meeting` — record a meeting, transcribe it, write clean notes.
+ * `infer meeting` — record a meeting and transcribe it; notes on request.
  */
 
 import { join, resolve } from "node:path";
@@ -34,7 +34,7 @@ export const meetingCmd = Command.make(
 			Flag.withMetavar("dir"),
 			Flag.optional,
 			Flag.withDescription(
-				"Skip recording: transcribe and write notes for a folder recorded earlier, e.g. after an interrupted run.",
+				"Skip recording: transcribe a folder recorded earlier, e.g. after an interrupted run, or add --notes to one already transcribed.",
 			),
 		),
 		duration: Flag.Finite("duration").pipe(
@@ -70,9 +70,11 @@ export const meetingCmd = Command.make(
 				`OpenRouter model that writes the notes. Defaults to ${DEFAULT_MODEL}.`,
 			),
 		),
-		noNotes: Flag.Boolean("no-notes").pipe(
+		notes: Flag.Boolean("notes").pipe(
 			Flag.withDefault(false),
-			Flag.withDescription("Stop after the transcript; no OpenRouter call."),
+			Flag.withDescription(
+				"Also have an OpenRouter model write notes.md: summary, decisions, action items and a cleaned-up transcript.",
+			),
 		),
 		json: jsonFlag,
 	},
@@ -111,9 +113,9 @@ export const meetingCmd = Command.make(
 					),
 				),
 			);
-			const notesPath = config.noNotes
-				? undefined
-				: yield* notes(dir, markdown, config.model);
+			const notesPath = config.notes
+				? yield* notes(dir, markdown, config.model)
+				: undefined;
 			const transcriptPath = join(dir, "transcript.md");
 			if (config.json) {
 				return yield* emitJson({
@@ -127,15 +129,15 @@ export const meetingCmd = Command.make(
 		}),
 ).pipe(
 	Command.withShortDescription(
-		"Record a meeting (mic + system audio), transcribe it, write notes.",
+		"Record a meeting (mic + system audio) and transcribe it.",
 	),
 	Command.withDescription(
 		`Record your microphone and the computer's audio as two separate
 tracks, then transcribe each with Groq Whisper and merge them into one
 transcript where the mic is "Me" and system audio is "Them" — speaker
-labels without diarization. Finally an OpenRouter model writes notes.md:
-summary, decisions, action items, open questions and a cleaned-up
-transcript.
+labels without diarization. --notes also has an OpenRouter model write
+notes.md: summary, decisions, action items, open questions and a
+cleaned-up transcript, in the meeting's language.
 
 macOS 15+ only. The first run compiles a small Swift helper (needs the
 Xcode Command Line Tools) and macOS asks to allow your terminal under
@@ -147,21 +149,29 @@ again with --from <dir>. On speakers rather than headphones the mic also
 hears the other side; those echoes are dropped from "Me" when they repeat
 what "Them" said at the same moment.
 
-Writes into the folder: mic.caf, system.caf, transcript.md,
-transcript.json and notes.md. stdout is the path of notes.md (or of
-transcript.md with --no-notes).
+Writes into the folder:
+  mic.caf, system.caf                   the two tracks as recorded
+  mic.ogg, system.ogg                   compressed copies, as uploaded
+  mic.transcript.json, system.transcript.json
+                                        Groq's raw response per track
+  transcript.md, transcript.json        both tracks merged by time
+  notes.md                              with --notes
+stdout is the path of transcript.md, or of notes.md with --notes.
 
-Requires a Groq API key, and an OpenRouter key unless --no-notes.`,
+Requires a Groq API key, and an OpenRouter key for --notes.`,
 	),
 	Command.withExamples([
-		{ command: "infer meeting", description: "Record until Enter or Ctrl-C" },
+		{
+			command: "infer meeting",
+			description: "Record until Enter or Ctrl-C, then transcribe",
+		},
 		{
 			command: "infer meeting --me Jimi --them Client --language en",
 			description: "Name the two sides",
 		},
 		{
-			command: "infer meeting --from meetings/2026-10-02-1430",
-			description: "Transcribe a recording made earlier",
+			command: "infer meeting --from meetings/2026-10-02-1430 --notes",
+			description: "Add notes to a meeting recorded earlier",
 		},
 	]),
 );
