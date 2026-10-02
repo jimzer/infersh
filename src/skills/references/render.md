@@ -161,6 +161,29 @@ up to 3 employees. Larger organisations need a paid company licence
 (<https://remotion.pro>). The CLI prints this on every video render. If the user
 may be affected, tell them plainly — do not bury it.
 
+## Capturing a live page: `infer shot`
+
+Not a composition but a URL — a deployed site, a docs page, or the app you are
+building on `localhost`. Same pinned headless Chrome, nothing to set up:
+
+```bash
+infer shot localhost:3000 -o home.png                     # the whole page
+infer shot example.com --width 390 --no-full-page          # what a phone sees first
+infer shot example.com --selector '#pricing' --scale 2     # one element, retina
+infer shot example.com -o page.pdf                         # print it
+```
+
+- A bare address works: `localhost:3000` gets `http://`, anything else `https://`.
+- The **whole page** is captured by default; `--no-full-page` keeps only the
+  viewport, `--selector` one element.
+- It waits for `load` and for web fonts. For a page that renders its content
+  later, add `--wait-for '<selector>'`; for animations, `--delay <ms>`.
+  `--wait networkidle` exists, but many live sites never go idle and it times
+  out.
+- `--json` adds the final URL after redirects, the title and the HTTP status. A
+  4xx or 5xx page is still captured, with a note — check the status before
+  treating the image as the real page.
+
 ## Assets
 
 This is the one place the subcommands differ, and it is easy to get wrong.

@@ -17,6 +17,7 @@ import {
 	Effect,
 	FileSystem,
 	Layer,
+	Schema,
 	type Scope,
 } from "effect";
 import { inlineScript } from "./html.ts";
@@ -192,12 +193,41 @@ export interface HtmlRequest {
 	readonly title: string;
 }
 
+export interface ShotRequest {
+	readonly url: string;
+	/** The extension picks the format: png, jpg, webp, or pdf. */
+	readonly outputPath: string;
+	readonly width: number;
+	readonly height: number;
+	readonly fullPage: boolean;
+	readonly selector?: string;
+	readonly deviceScaleFactor: number;
+	readonly dark: boolean;
+	readonly waitUntil: string;
+	readonly waitFor?: string;
+	readonly delay?: number;
+	readonly timeoutMs: number;
+	readonly quality?: number;
+}
+
+export interface ShotResult {
+	readonly output: string;
+	/** Where the page ended up, after any redirects. */
+	readonly url: string;
+	readonly title: string;
+	readonly status?: number;
+}
+
 export interface RenderShape {
 	readonly toImage: (
 		request: ImageRequest,
 	) => Effect.Effect<string, RenderError>;
 	readonly toPdf: (request: PdfRequest) => Effect.Effect<string, RenderError>;
 	readonly toHtml: (request: HtmlRequest) => Effect.Effect<string, RenderError>;
+	/** Screenshot or print a live page. */
+	readonly toShot: (
+		request: ShotRequest,
+	) => Effect.Effect<ShotResult, RenderError>;
 	/** Every path written: the video, or one still per frame. */
 	readonly toVideo: (
 		request: VideoRequest,
@@ -360,7 +390,39 @@ export const isolateComposition = (
 		return { path: isolated, css: stylesheets.length > 0 };
 	});
 
-/** Stages the worker and runs it, returning the path it wrote. */
+/**
+ * Writes the worker into `dir` and runs one job, returning what it printed.
+ *
+ * stderr passes straight through rather than being collected: a first render
+ * downloads the headless shell for about a minute, and collected output would
+ * make that look like a hang. stdout carries the worker's one-line report.
+ */
+const runWorker = (
+	dir: string,
+	job: Record<string, unknown>,
+): Effect.Effect<string, Failure, Platform> =>
+	Effect.gen(function* () {
+		yield* writeFile(join(dir, "render-shared.ts"), SHARED_SOURCE);
+		const childPath = join(dir, "render-child.ts");
+		yield* writeFile(childPath, CHILD_SOURCE);
+		const payload = JSON.stringify({
+			...job,
+			playwrightPackage: PLAYWRIGHT_PACKAGE,
+		});
+		const result = yield* run(
+			"bun",
+			["--install=fallback", "run", childPath, payload],
+			{ cwd: dir, stdout: "pipe", stderr: "inherit" },
+		);
+		if (result.code !== 0) {
+			return yield* Effect.fail(
+				new RenderError({ reason: "Render failed; see the output above." }),
+			);
+		}
+		return result.stdout;
+	});
+
+/** Stages a composition and the worker, runs it, and returns the path written. */
 const runChild = (
 	request: RenderRequest,
 	job: Record<string, unknown>,
@@ -374,37 +436,27 @@ const runChild = (
 			dir,
 			{ inlineImports: true },
 		);
-		yield* writeFile(join(dir, "render-shared.ts"), SHARED_SOURCE);
-		const childPath = join(dir, "render-child.ts");
-		yield* writeFile(childPath, CHILD_SOURCE);
-
-		const payload = JSON.stringify({
+		yield* runWorker(dir, {
 			...job,
 			compositionPath,
 			props: request.props ?? {},
 			outputPath: request.outputPath,
 			assetDir: request.assetDir,
 			head: request.head,
-			playwrightPackage: PLAYWRIGHT_PACKAGE,
 			tailwindPackage: request.tailwind ? TAILWIND_PACKAGE : undefined,
 			waitUntil: request.waitUntil,
 		});
-
-		// stderr passes straight through rather than being collected: a first
-		// render downloads the headless shell for about a minute, and collected
-		// output would make that look like a hang.
-		const result = yield* run(
-			"bun",
-			["--install=fallback", "run", childPath, payload],
-			{ cwd: dir, stdout: "ignore", stderr: "inherit" },
-		);
-		if (result.code !== 0) {
-			return yield* Effect.fail(
-				new RenderError({ reason: "Render failed; see the output above." }),
-			);
-		}
 		return request.outputPath;
 	});
+
+/** The worker's report on a captured page. */
+const ShotReport = Schema.fromJsonString(
+	Schema.Struct({
+		url: Schema.String,
+		title: Schema.String,
+		status: Schema.optional(Schema.Finite),
+	}),
+);
 
 /**
  * Reuses one Chrome Headless Shell across video renders.
@@ -660,6 +712,38 @@ const make = (platform: Context.Context<Platform>): RenderShape => {
 				: page;
 			yield* writeFile(request.outputPath, html);
 			return request.outputPath;
+		}, finish),
+
+		toShot: Effect.fn("Render.toShot")(function* (request: ShotRequest) {
+			yield* Console.error(`Capturing ${request.url}...`);
+			const dir = yield* tempDir("infer-render-");
+			const printed = yield* runWorker(dir, {
+				kind: /\.pdf$/i.test(request.outputPath) ? "pdf" : "image",
+				url: request.url,
+				outputPath: request.outputPath,
+				width: request.width,
+				height: request.height,
+				fullPage: request.fullPage,
+				selector: request.selector,
+				deviceScaleFactor: request.deviceScaleFactor,
+				dark: request.dark,
+				waitUntil: request.waitUntil,
+				waitFor: request.waitFor,
+				delay: request.delay,
+				timeoutMs: request.timeoutMs,
+				quality: request.quality,
+			});
+			const report = yield* Schema.decodeUnknownEffect(ShotReport)(
+				printed.trim().split("\n").at(-1) ?? "",
+			).pipe(
+				Effect.mapError(
+					() =>
+						new RenderError({
+							reason: "The capture finished but reported nothing.",
+						}),
+				),
+			);
+			return { output: request.outputPath, ...report };
 		}, finish),
 
 		toVideo: Effect.fn("Render.toVideo")(function* (request: VideoRequest) {

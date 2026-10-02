@@ -1,6 +1,6 @@
 ---
 name: infer
-description: Use the infer CLI to render TSX compositions into images, PDFs, self-contained interactive HTML pages and videos, run fal.ai models, scrape the web and search with Bright Data, transcribe audio with Groq, and show the user an interactive web page to review results or choose between options. Use when asked to generate an image or video from code, render a PDF, build a standalone or interactive HTML page, report or dashboard to share as a file, produce an OG image or social clip, run an AI image or video model, scrape a page, search the web, find YouTube videos, collect X posts, Reddit threads or LinkedIn posts and jobs, ask ChatGPT for sourced answers, transcribe audio, run a prompt through any model with JSON-schema output, check how much provider credit is left, or whenever the user should pick, approve, rank or read something that does not fit in a terminal.
+description: Use the infer CLI to render TSX compositions into images, PDFs, self-contained interactive HTML pages and videos, run fal.ai models, scrape the web and search with Bright Data, transcribe audio with Groq, and show the user an interactive web page to review results or choose between options. Use when asked to generate an image or video from code, render a PDF, screenshot a website or a localhost page, build a standalone or interactive HTML page, report or dashboard to share as a file, produce an OG image or social clip, run an AI image or video model, scrape a page, search the web, find YouTube videos, collect X posts, Reddit threads or LinkedIn posts and jobs, ask ChatGPT for sourced answers, transcribe audio, run a prompt through any model with JSON-schema output, check how much provider credit is left, or whenever the user should pick, approve, rank or read something that does not fit in a terminal.
 ---
 
 # infer
@@ -32,6 +32,7 @@ already does that and cannot go stale.
 | `infer bdata` | Bright Data: scrape, search, YouTube, X, Reddit, LinkedIn, ChatGPT | [bdata.md](references/bdata.md) |
 | `infer openrouter` | find any model and run a prompt through it, with JSON-schema output | [openrouter.md](references/openrouter.md) |
 | `infer groq` | Groq Whisper speech-to-text | [groq.md](references/groq.md) |
+| `infer shot` | screenshot or print a live URL, localhost included | [render.md](references/render.md) |
 | `infer human` | ask the human: pick, approve, rank, edit, a form, or any page you write | [human.md](references/human.md) |
 
 Read the reference file for the area you are working in. Do not read all of

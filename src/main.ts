@@ -14,6 +14,7 @@ import { humanCmd } from "./commands/human.ts";
 import { keysCmd } from "./commands/keys.ts";
 import { openrouterCmd } from "./commands/openrouter.ts";
 import { renderCmd } from "./commands/render.ts";
+import { shotCmd } from "./commands/shot.ts";
 import { skillsCmd } from "./commands/skills.ts";
 import { updateCmd } from "./commands/update.ts";
 import * as Fal from "./fal.ts";
@@ -59,6 +60,7 @@ const inferCmd = Command.make("infer").pipe(
 		keysCmd,
 		openrouterCmd,
 		renderCmd,
+		shotCmd,
 		skillsCmd,
 		updateCmd,
 	]),

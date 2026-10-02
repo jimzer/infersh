@@ -68,6 +68,7 @@ infer render image card.tsx -o card.png --props '{"title":"Hello"}'
 infer render image card.tsx --assets ./public --width 1200 --scale 2
 infer render pdf invoice.tsx --props ./data.json --margin 1cm
 infer render html dashboard.tsx --props ./data.json -o dashboard.html
+infer shot localhost:3000 -o home.png                       # screenshot a live page
 infer render video intro.tsx -o intro.mp4 --duration 90
 infer render video intro.tsx --frame 0,45,89 -o check.png   # stills, no encoding
 cat card.tsx | infer render image - -o card.png

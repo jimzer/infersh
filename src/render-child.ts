@@ -16,7 +16,20 @@ import { assetPathFor, buildHtml, formatFromPath } from "./render-shared.ts";
 
 interface Job {
 	readonly kind: "image" | "pdf";
-	readonly compositionPath: string;
+	/** A composition to render, or `url` for a live page — never both. */
+	readonly compositionPath?: string;
+	/** Capture a live page instead of rendering a composition (`infer shot`). */
+	readonly url?: string;
+	/** Capture just this element rather than the page. */
+	readonly selector?: string;
+	/** Wait for this selector after loading, for pages that render late. */
+	readonly waitFor?: string;
+	/** Extra milliseconds to wait before capturing, for animations. */
+	readonly delay?: number;
+	/** Emulate `prefers-color-scheme: dark`. */
+	readonly dark?: boolean;
+	/** Navigation and wait timeout. */
+	readonly timeoutMs?: number;
 	readonly props: unknown;
 	readonly outputPath: string;
 	readonly assetDir?: string;
@@ -70,39 +83,47 @@ const job: Job = JSON.parse(process.argv[2] ?? "{}");
 
 // --- 1. Composition -> markup ---------------------------------------------
 
-const { createElement } = await import("react");
-const { renderToStaticMarkup } = await import("react-dom/server");
+/** Renders the composition to a full document. Not used for a live URL. */
+const composeHtml = async (compositionPath: string): Promise<string> => {
+	const { createElement } = await import("react");
+	const { renderToStaticMarkup } = await import("react-dom/server");
 
-const mod = await import(job.compositionPath);
-const Component = mod.default;
-if (typeof Component !== "function") {
-	fail("The composition must have a default export that is a component.");
-}
+	const mod = await import(compositionPath);
+	const Component = mod.default;
+	if (typeof Component !== "function") {
+		fail("The composition must have a default export that is a component.");
+	}
 
-const markup = renderToStaticMarkup(
-	createElement(Component, (job.props ?? {}) as Record<string, unknown>),
-);
-if (markup.trim() === "") {
-	fail(
-		"The composition rendered nothing. Does its default export return markup?",
+	const markup = renderToStaticMarkup(
+		createElement(Component, (job.props ?? {}) as Record<string, unknown>),
 	);
-}
+	if (markup.trim() === "") {
+		fail(
+			"The composition rendered nothing. Does its default export return markup?",
+		);
+	}
 
-// Resolved through auto-install like every other package here, so the pinned
-// version comes from Bun's cache and the page needs no network to be styled.
-const tailwindScript =
-	job.tailwindPackage === undefined
+	// Resolved through auto-install like every other package here, so the pinned
+	// version comes from Bun's cache and the page needs no network to be styled.
+	const tailwindScript =
+		job.tailwindPackage === undefined
+			? undefined
+			: await Bun.file(
+					Bun.resolveSync(job.tailwindPackage, import.meta.dir),
+				).text();
+
+	return buildHtml({
+		markup,
+		head: job.head,
+		tailwindScript,
+		transparent: job.transparent ?? false,
+	});
+};
+
+const html =
+	job.compositionPath === undefined
 		? undefined
-		: await Bun.file(
-				Bun.resolveSync(job.tailwindPackage, import.meta.dir),
-			).text();
-
-const html = buildHtml({
-	markup,
-	head: job.head,
-	tailwindScript,
-	transparent: job.transparent ?? false,
-});
+		: await composeHtml(job.compositionPath);
 
 // --- 2. Markup -> browser -------------------------------------------------
 
@@ -222,44 +243,63 @@ try {
 	const context = await browser.newContext({
 		viewport: { width: job.width ?? 1280, height: job.height ?? 720 },
 		deviceScaleFactor: job.deviceScaleFactor ?? 1,
+		...(job.dark ? { colorScheme: "dark" as const } : {}),
 	});
 	const page = await context.newPage();
 
-	// Local assets are served by intercepting the virtual origin, so no HTTP
-	// server is started and the asset directory is read in place.
-	await page.route(`${"http://assets.infer.local"}/**`, async (route) => {
-		if (job.assetDir === undefined) {
-			return route.fulfill({
-				status: 404,
-				body: "no --assets directory given",
-			});
-		}
-		const path = assetPathFor(route.request().url(), job.assetDir);
-		if (path === null) {
-			return route.fulfill({
-				status: 403,
-				body: "outside the asset directory",
-			});
-		}
-		const file = Bun.file(path);
-		if (!(await file.exists())) {
-			return route.fulfill({ status: 404, body: "not found" });
-		}
-		return route.fulfill({
-			status: 200,
-			contentType: file.type,
-			body: Buffer.from(await file.arrayBuffer()),
+	let status: number | undefined;
+	if (job.url !== undefined) {
+		const timeout = job.timeoutMs ?? 30_000;
+		const response = await page.goto(job.url, {
+			waitUntil: job.waitUntil as "load",
+			timeout,
 		});
-	});
+		status = response?.status();
+		// Text set in a web font reflows when the font arrives; `load` does not
+		// always wait for it.
+		await page.evaluate("document.fonts.ready");
+		if (job.waitFor !== undefined) {
+			await page.waitForSelector(job.waitFor, { timeout });
+		}
+	} else {
+		// Local assets are served by intercepting the virtual origin, so no HTTP
+		// server is started and the asset directory is read in place.
+		await page.route(`${"http://assets.infer.local"}/**`, async (route) => {
+			if (job.assetDir === undefined) {
+				return route.fulfill({
+					status: 404,
+					body: "no --assets directory given",
+				});
+			}
+			const path = assetPathFor(route.request().url(), job.assetDir);
+			if (path === null) {
+				return route.fulfill({
+					status: 403,
+					body: "outside the asset directory",
+				});
+			}
+			const file = Bun.file(path);
+			if (!(await file.exists())) {
+				return route.fulfill({ status: 404, body: "not found" });
+			}
+			return route.fulfill({
+				status: 200,
+				contentType: file.type,
+				body: Buffer.from(await file.arrayBuffer()),
+			});
+		});
 
-	await page.setContent(html, { waitUntil: job.waitUntil as "load" });
+		await page.setContent(html ?? "", { waitUntil: job.waitUntil as "load" });
+	}
+	if (job.delay !== undefined) await page.waitForTimeout(job.delay);
+
 	mkdirSync(dirname(job.outputPath), { recursive: true });
 
 	if (job.kind === "image") {
 		// With no explicit height, shrink the viewport to the content so the
 		// image hugs it. documentElement reports the viewport height, not the
 		// content's, so body is what has to be measured.
-		if (job.height === undefined) {
+		if (job.height === undefined && job.url === undefined) {
 			const contentHeight = Number(
 				await page.evaluate("document.body.scrollHeight"),
 			);
@@ -271,15 +311,23 @@ try {
 			}
 		}
 		const format = formatFromPath(job.outputPath);
-		await page.screenshot({
+		const options = {
 			path: job.outputPath,
-			fullPage: job.fullPage ?? true,
 			type: format,
 			omitBackground: job.transparent ?? false,
 			...(format === "jpeg" && job.quality !== undefined
 				? { quality: job.quality }
 				: {}),
-		});
+		};
+		if (job.selector !== undefined) {
+			const element = page.locator(job.selector).first();
+			if ((await element.count()) === 0) {
+				fail(`No element matches --selector ${job.selector}.`);
+			}
+			await element.screenshot(options);
+		} else {
+			await page.screenshot({ ...options, fullPage: job.fullPage ?? true });
+		}
 	} else {
 		await page.pdf({
 			path: job.outputPath,
@@ -292,6 +340,11 @@ try {
 			printBackground: true,
 		});
 	}
+	// One JSON line for the CLI to report: where the page ended up after any
+	// redirects, what it is called, and how it answered.
+	process.stdout.write(
+		`${JSON.stringify({ url: page.url(), title: await page.title(), status })}\n`,
+	);
 } finally {
 	await browser.close();
 }
