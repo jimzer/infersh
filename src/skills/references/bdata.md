@@ -16,6 +16,39 @@ infer bdata chatgpt "what changed in AI agents this month?"
 
 Needs `BRIGHTDATA_API_KEY`.
 
+## Output shapes
+
+Listing commands print **compact records** by default — the handful of fields
+worth reading, under short names. `--help` on each command shows its shape.
+
+| command | one result |
+| --- | --- |
+| `search` (Google) | `{title, url, snippet, date}` |
+| `youtube discover` | `{title, url, channel, views, likes, published, duration}` |
+| `youtube comments` | `{text, author, likes, replies, date}` |
+| `x profile` | `{text, url, author, date, likes, reposts, replies, views}` |
+| `reddit search`, `subreddit` | `{title, url, community, author, date, score, comments, text}` |
+| `reddit comments` | `{text, author, date, score, replies, url}` |
+| `linkedin posts` | `{text, url, author, date, likes, comments, type}` |
+| `linkedin jobs` | `{title, company, location, url, posted, type, seniority, salary}` |
+| `chatgpt` | `{prompt, answer, citations: [{title, url}], model, followUp, followUpAnswer}` |
+
+- A missing value is left out, not `null`. A failed row is `{error, errorCode, input}`.
+- `--raw` prints Bright Data's full record instead (snake_case, 6× to over 1000×
+  larger: a ChatGPT answer carries ~750 KB of page HTML).
+- `--fields a,b,c` keeps only those keys of each result, of whichever shape is
+  printed; `citations.url` reaches inside. A key no result has is named on
+  stderr with the keys that exist. Use `jq` for anything more complex.
+- By-URL commands (`youtube video`, `x post`, `reddit post`) print the full
+  record by default — you asked for those records — and take `--compact`.
+  `linkedin company|profile` and `snapshot get` print raw and take `--fields`.
+
+```bash
+infer bdata search "effect typescript" --fields url
+infer bdata youtube video <url> --fields title,transcript
+infer bdata x profile https://x.com/OpenAI --limit 5 --raw --fields url,is_repost
+```
+
 ## scrape
 
 For pages a plain fetch cannot get — anti-bot protection, geo-gating, heavy JS.
@@ -31,10 +64,14 @@ For pages a plain fetch cannot get — anti-bot protection, geo-gating, heavy JS
 
 ## search
 
-Returns the search engine results page, not a curated answer.
+Returns the organic results of the search engine results page, not a curated
+answer.
 
-- `--format json` for anything programmatic.
-- `--engine google|bing|yandex`, default google.
+- Google prints `[{title, url, snippet, date}]`; several queries print
+  `[{query, results}]`. `--raw` gives the whole parsed page (related searches,
+  panels).
+- `--engine google|bing|yandex`, default google. Bing and Yandex are not
+  parsed and print the page as returned.
 - `--num-results` defaults to 10, capped at 100.
 - Several queries in one call run in parallel.
 
@@ -162,7 +199,7 @@ it is building, often months before anything ships.
 
 ```bash
 infer bdata linkedin jobs --location "United States" --company OpenAI \
-  --limit 50 --time-range "Past month" | jq -r '.[].job_title'
+  --limit 50 --time-range "Past month" --fields title
 ```
 
 `profile` returns personal data — employment history, education, skills.
@@ -177,8 +214,8 @@ infer bdata chatgpt "What are the best TypeScript effect systems in 2026?"
 infer bdata chatgpt "best CRM for small teams" --country de
 ```
 
-Returns `answer_text`, `answer_text_markdown`, `answer_html`, and `citations`
-with titles and URLs. **Billed per prompt, not per token**, so a question's
+Prints `{prompt, answer, citations: [{title, url}], model}`; `answer` is
+markdown. **Billed per prompt, not per token**, so a question's
 cost does not depend on how long the answer turns out to be.
 
 Two ways to use it:

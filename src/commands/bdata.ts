@@ -42,6 +42,23 @@ import {
 	YOUTUBE_COMMENTS_DATASET,
 	YOUTUBE_VIDEOS_DATASET,
 } from "../bdata.ts";
+import {
+	CHATGPT_ANSWER,
+	compactRecords,
+	compactSerp,
+	LINKEDIN_JOB,
+	LINKEDIN_POST,
+	missingFields,
+	parseFields,
+	projectFields,
+	REDDIT_COMMENT,
+	REDDIT_POST,
+	SEARCH_RESULT_SUMMARY,
+	type Shape,
+	X_POST,
+	YOUTUBE_COMMENT,
+	YOUTUBE_VIDEO,
+} from "../listing.ts";
 import { emitJson, jsonFlag, wrapPayload } from "../output.ts";
 
 const SCRAPE_KEYS = [
@@ -185,6 +202,98 @@ const requirePositive = (limit: number, flag: string) =>
 		? Effect.fail(new BdataError({ reason: `${flag} must be at least 1.` }))
 		: Effect.void;
 
+// --- output shapes ----------------------------------------------------------
+//
+// Listing commands print a compact record per result by default, and the
+// provider's full record with --raw. Commands that collect known URLs print
+// the full record by default, and the compact one with --compact. --fields
+// works on whichever is printed. See docs/adrs/0029.
+
+const fieldsFlag = Flag.String("fields").pipe(
+	Flag.withMetavar("a,b,c"),
+	Flag.optional,
+	// An empty --fields "" selects nothing, so it is treated as absent.
+	Flag.map(
+		Option.flatMap((text) =>
+			Option.liftPredicate(parseFields(text), (fields) => fields.length > 0),
+		),
+	),
+	Flag.withDescription(
+		"Keep only these keys of each result, comma-separated, e.g. --fields title,url. Applies to whichever shape is printed: the compact one, or Bright Data's own keys with --raw. A dotted path reaches into nested objects and arrays, e.g. citations.url. A failed row keeps its error field. A key no result has is reported on stderr with the keys that do exist. Pipe to jq for anything more complex.",
+	),
+);
+
+const rawFlag = Flag.Boolean("raw").pipe(
+	Flag.withDefault(false),
+	Flag.withDescription(
+		"Print Bright Data's full record for each result instead of the compact shape: every field the provider returns, under its own snake_case names, from a few to over a thousand times larger. Use it when the field you need is not in the compact shape, ideally with --fields.",
+	),
+);
+
+const compactFlag = Flag.Boolean("compact").pipe(
+	Flag.withDefault(false),
+	Flag.withDescription(
+		"Print the compact shape shown above instead of Bright Data's full record. The same shape the discovery command prints by default.",
+	),
+);
+
+/** The help paragraph for a command that prints compact records by default. */
+const compactNote = (one: string, shape: Shape) =>
+	`Prints one compact record per ${one}:
+
+  ${shape.summary}
+
+A field the provider has no value for is left out rather than null. A
+row that could not be collected is {error, errorCode, input}. --raw
+prints Bright Data's full record instead; --fields keeps only the keys
+you name, of either shape.`;
+
+/** The help paragraph for a command that prints the full record by default. */
+const rawNote = (shape: Shape) =>
+	`Prints Bright Data's full record. --compact prints just
+
+  ${shape.summary}
+
+and --fields keeps only the keys you name, of either shape.`;
+
+/** Applies --fields, warning on stderr about keys no result has. */
+const selectFields = (
+	value: unknown,
+	fields: Option.Option<ReadonlyArray<string>>,
+): Effect.Effect<unknown> =>
+	Option.match(fields, {
+		onNone: () => Effect.succeed(value),
+		onSome: (fields) =>
+			Effect.gen(function* () {
+				const { missing, available } = missingFields(value, fields);
+				if (missing.length > 0) {
+					yield* Console.error(
+						`--fields: no result has ${missing.join(", ")}. Keys here: ${available.join(", ")}`,
+					);
+				}
+				return projectFields(value, fields);
+			}),
+	});
+
+/** Prints dataset rows, compacted when asked and projected by --fields. */
+const emitRecords = (
+	result: unknown,
+	options: {
+		readonly shape?: Shape;
+		readonly compact: boolean;
+		readonly fields: Option.Option<ReadonlyArray<string>>;
+	},
+) =>
+	Effect.gen(function* () {
+		const shaped =
+			options.compact && options.shape
+				? compactRecords(options.shape, result)
+				: result;
+		yield* Console.log(
+			renderResult(yield* selectFields(shaped, options.fields)),
+		);
+	});
+
 // --- scrape ---------------------------------------------------------------
 
 const scrapeCmd = Command.make(
@@ -287,6 +396,13 @@ const searchCmd = Command.make(
 				"Result offset to start from, for paging. Defaults to 0.",
 			),
 		),
+		raw: Flag.Boolean("raw").pipe(
+			Flag.withDefault(false),
+			Flag.withDescription(
+				"Print Bright Data's whole parsed results page instead of [{title, url, snippet, date}]: organic results under its own names (link, description), plus related searches, pagination and any panels. --fields then picks its top-level keys, or dotted paths such as organic.link.",
+			),
+		),
+		fields: fieldsFlag,
 		...baseFlags,
 	},
 	(config) =>
@@ -303,18 +419,63 @@ const searchCmd = Command.make(
 				() => "google" as SearchEngine,
 			);
 			const result = yield* bdata.search(engine, config.queries, options);
-			if (config.json) {
-				return yield* emitJson(wrapPayload(result, "content"));
+
+			if (!config.raw) {
+				// One result for one query, an array for several — see runAll.
+				const pages =
+					config.queries.length === 1 || !Array.isArray(result)
+						? [result]
+						: result;
+				const compacted = Option.all(pages.map(compactSerp));
+				if (Option.isSome(compacted)) {
+					const [first] = compacted.value;
+					if (config.queries.length === 1 && first !== undefined) {
+						return yield* Console.log(
+							renderResult(yield* selectFields(first, config.fields)),
+						);
+					}
+					const grouped: Array<unknown> = [];
+					for (const [index, results] of compacted.value.entries()) {
+						grouped.push({
+							query: config.queries[index],
+							results: yield* selectFields(results, config.fields),
+						});
+					}
+					return yield* Console.log(renderResult(grouped));
+				}
+				yield* Console.error(
+					"Not a parsed Google results page (Bing, Yandex, a --data-format, or an error from Bright Data), so it is printed as returned.",
+				);
 			}
-			yield* Console.log(renderResult(result));
+
+			const selected =
+				typeof result === "string"
+					? result
+					: yield* selectFields(result, config.fields);
+			if (config.json) {
+				return yield* emitJson(wrapPayload(selected, "content"));
+			}
+			yield* Console.log(renderResult(selected));
 		}),
 ).pipe(
 	Command.withShortDescription("Search Google, Bing or Yandex."),
 	Command.withDescription(
 		`Run search engine queries through Bright Data.
 
-Returns the search engine results page rather than a curated answer,
-so --format json is usually what you want for anything programmatic.
+On Google (the default), prints the organic results, one compact
+record each:
+
+  ${SEARCH_RESULT_SUMMARY}
+
+date is the one Google shows under a result, as it shows it ("23 Mar
+2026", "3 days ago"), and is left out when there is none. Several
+queries print [{query, results}], in the order given. --fields keeps
+only the keys you name.
+
+--raw prints Bright Data's whole parsed results page instead —
+organic results under its own names (link, description), plus related
+searches, pagination and whatever panels Google showed. Bing and Yandex
+are not parsed, so they always print the page as returned.
 
 Requires a Bright Data API key: run \`infer keys set\` or set
 BRIGHTDATA_API_KEY.`,
@@ -322,19 +483,27 @@ BRIGHTDATA_API_KEY.`,
 	Command.withExamples([
 		{
 			command: `infer bdata search "pizza restaurants"`,
-			description: "Search Google",
+			description: "Search Google: [{title, url, snippet, date}]",
 		},
 		{
-			command: `infer bdata search "pizza" --engine bing --format json`,
-			description: "Search Bing and get structured results",
+			command: `infer bdata search "effect typescript" --fields url`,
+			description: "Just the result URLs",
+		},
+		{
+			command: `infer bdata search "pizza" --raw | jq '.related'`,
+			description: "Everything Google returned, including related searches",
+		},
+		{
+			command: `infer bdata search "pizza" --engine bing`,
+			description: "Search Bing (printed as returned)",
 		},
 		{
 			command: `infer bdata search "pizza" --country gb --num-results 20`,
 			description: "Geo-target the search and widen it",
 		},
 		{
-			command: `infer bdata search "pizza" "sushi" "tacos" --format json`,
-			description: "Run several queries in parallel",
+			command: `infer bdata search "pizza" "sushi" "tacos"`,
+			description: "Run several queries in parallel: [{query, results}]",
 		},
 	]),
 );
@@ -364,6 +533,8 @@ const videoCmd = Command.make(
 				"Language for the returned transcript, e.g. English. Omit to use the video's own.",
 			),
 		),
+		compact: compactFlag,
+		fields: fieldsFlag,
 		json: jsonFlag,
 	},
 	(config) =>
@@ -378,7 +549,11 @@ const videoCmd = Command.make(
 					),
 				}),
 			);
-			yield* Console.log(renderResult(result));
+			yield* emitRecords(result, {
+				shape: YOUTUBE_VIDEO,
+				compact: config.compact,
+				fields: config.fields,
+			});
 		}),
 ).pipe(
 	Command.withShortDescription("Collect metadata for YouTube videos by URL."),
@@ -387,7 +562,12 @@ const videoCmd = Command.make(
 
 Returns structured records with title, channel, view and like counts,
 duration, publish date, description, tags, thumbnail, subscriber count
-and the transcript.
+and the transcript — about 80 KB per video, most of it the transcript
+twice over (transcript and formatted_transcript).
+
+${rawNote(YOUTUBE_VIDEO)}
+
+--fields title,transcript is the cheap way to read what a video says.
 
 Usually answers inline. Longer jobs are deferred to a snapshot, which
 is then polled automatically; progress goes to stderr so stdout stays
@@ -401,8 +581,13 @@ pure JSON.`,
 		},
 		{
 			command:
-				"infer bdata youtube video https://youtu.be/a https://youtu.be/b | jq '.[].title'",
-			description: "Collect several and pull out the titles",
+				"infer bdata youtube video https://youtu.be/a https://youtu.be/b --compact",
+			description: "Several videos, compact: title, channel, views, ...",
+		},
+		{
+			command:
+				"infer bdata youtube video https://youtu.be/a --fields title,transcript",
+			description: "Just what the video says",
 		},
 		{
 			command:
@@ -448,6 +633,8 @@ const discoverCmd = Command.make(
 				"Two-letter country code to search from, changing which results are surfaced.",
 			),
 		),
+		raw: rawFlag,
+		fields: fieldsFlag,
 		json: jsonFlag,
 	},
 	(config) =>
@@ -477,15 +664,22 @@ const discoverCmd = Command.make(
 					country: Option.getOrUndefined(config.country),
 				}),
 			);
-			yield* Console.log(renderResult(result));
+			yield* emitRecords(result, {
+				shape: YOUTUBE_VIDEO,
+				compact: !config.raw,
+				fields: config.fields,
+			});
 		}),
 ).pipe(
 	Command.withShortDescription("Find YouTube videos by keyword."),
 	Command.withDescription(
 		`Discover YouTube videos matching a keyword search.
 
-Returns the same records as \`video\`, but found by searching rather
-than by URL.
+Finds the same records as \`video\`, by searching rather than by URL.
+${compactNote("video", YOUTUBE_VIDEO)}
+
+duration is in seconds. The transcript, description and tags are in
+--raw.
 
 --num-of-posts is required. A keyword can match an unbounded number of
 videos and every one is billed, so the limit has to be stated rather
@@ -505,7 +699,7 @@ every 10 seconds for up to 10 minutes, with progress on stderr.`,
 			description: "Restrict discovery to recent videos",
 		},
 		{
-			command: `infer bdata youtube discover "pizza" "sushi" --num-of-posts 10 | jq '.[].url'`,
+			command: `infer bdata youtube discover "pizza" "sushi" --num-of-posts 10 --fields url`,
 			description: "Discover for several keywords and list the URLs",
 		},
 	]),
@@ -523,6 +717,8 @@ const youtubeCommentsCmd = Command.make(
 			),
 		),
 		limit: limitFlag,
+		raw: rawFlag,
+		fields: fieldsFlag,
 		json: jsonFlag,
 	},
 	(config) =>
@@ -533,15 +729,19 @@ const youtubeCommentsCmd = Command.make(
 				{ datasetId: YOUTUBE_COMMENTS_DATASET, limitPerInput: config.limit },
 				urlInput(config.urls),
 			);
-			yield* Console.log(renderResult(result));
+			yield* emitRecords(result, {
+				shape: YOUTUBE_COMMENT,
+				compact: !config.raw,
+				fields: config.fields,
+			});
 		}),
 ).pipe(
 	Command.withShortDescription("Collect the comments under a YouTube video."),
 	Command.withDescription(
 		`Collect comments from one or more YouTube videos.
 
-A different dataset from \`video\`, with its own shape: one row per
-comment, carrying the text, author, channel link, likes and reply count.
+A different dataset from \`video\`, with its own shape.
+${compactNote("comment", YOUTUBE_COMMENT)}
 
 \`video\` already returns the transcript, so use this when you want the
 audience's reaction rather than the content itself.
@@ -564,7 +764,8 @@ const youtubeCmd = Command.make("youtube").pipe(
 		`YouTube data via Bright Data's Web Scraper API.
 
 \`video\` collects known URLs; \`discover\` finds videos by keyword. Both
-return the same record shape, so their output is interchangeable.`,
+collect the same record: \`discover\` prints it compact unless --raw,
+\`video\` prints it whole unless --compact.`,
 	),
 	Command.withSubcommands([videoCmd, discoverCmd, youtubeCommentsCmd]),
 );
@@ -580,6 +781,8 @@ const xPostCmd = Command.make(
 				"One or more X post URLs, e.g. https://x.com/OpenAI/status/123. All are collected in a single request.",
 			),
 		),
+		compact: compactFlag,
+		fields: fieldsFlag,
 		json: jsonFlag,
 	},
 	(config) =>
@@ -589,7 +792,11 @@ const xPostCmd = Command.make(
 				{ datasetId: X_POSTS_DATASET },
 				urlInput(config.urls),
 			);
-			yield* Console.log(renderResult(result));
+			yield* emitRecords(result, {
+				shape: X_POST,
+				compact: config.compact,
+				fields: config.fields,
+			});
 		}),
 ).pipe(
 	Command.withShortDescription("Collect X posts by URL."),
@@ -599,6 +806,8 @@ const xPostCmd = Command.make(
 Returns the post text and date, engagement counts (replies, reposts,
 likes, views), attached photos and videos, hashtags and tagged users,
 plus the author's follower count, biography and verification status.
+
+${rawNote(X_POST)}
 
 No limit flag: the number of URLs you pass is the limit.
 
@@ -614,7 +823,7 @@ as content.`,
 		},
 		{
 			command:
-				"infer bdata x post https://x.com/a/status/1 https://x.com/b/status/2 | jq '.[].likes'",
+				"infer bdata x post https://x.com/a/status/1 https://x.com/b/status/2 --fields url,likes",
 			description: "Collect several and pull out engagement",
 		},
 	]),
@@ -631,6 +840,8 @@ const xProfileCmd = Command.make(
 		),
 		limit: limitFlag,
 		...dateWindowFlags,
+		raw: rawFlag,
+		fields: fieldsFlag,
 		json: jsonFlag,
 	},
 	(config) =>
@@ -649,21 +860,27 @@ const xProfileCmd = Command.make(
 					endDate: Option.getOrUndefined(config.endDate),
 				}),
 			);
-			yield* Console.log(renderResult(result));
+			yield* emitRecords(result, {
+				shape: X_POST,
+				compact: !config.raw,
+				fields: config.fields,
+			});
 		}),
 ).pipe(
 	Command.withShortDescription("Find recent X posts from profiles."),
 	Command.withDescription(
 		`Discover recent posts from one or more X profiles.
 
-Returns the same records as \`post\`, found by walking each profile
-rather than by URL. This is the reliable way to monitor accounts:
+Finds the same records as \`post\`, by walking each profile rather
+than by URL. This is the reliable way to monitor accounts:
 Bright Data has no keyword search for X, so a topic search has to go
 through \`infer bdata search 'site:x.com ... after:...'\` instead.
 
 --limit applies per profile, so three profiles at --limit 10 collect up
 to 30 records. Pass every account you want in one call rather than
-running the command repeatedly.`,
+running the command repeatedly.
+
+${compactNote("post", X_POST)}`,
 	),
 	Command.withExamples([
 		{
@@ -689,7 +906,8 @@ const xCmd = Command.make("x").pipe(
 		`X (Twitter) data via Bright Data's Web Scraper API.
 
 \`post\` collects known URLs; \`profile\` finds posts by account. Both
-return the same record shape.
+collect the same record: \`profile\` prints it compact unless --raw,
+\`post\` prints it whole unless --compact.
 
 There is no keyword search for X here — Bright Data does not offer one.
 To find posts about a topic, search Google instead:
@@ -710,6 +928,8 @@ const redditPostCmd = Command.make(
 				"One or more Reddit post URLs. All are collected in a single request.",
 			),
 		),
+		compact: compactFlag,
+		fields: fieldsFlag,
 		json: jsonFlag,
 	},
 	(config) =>
@@ -719,7 +939,11 @@ const redditPostCmd = Command.make(
 				{ datasetId: REDDIT_POSTS_DATASET },
 				urlInput(config.urls),
 			);
-			yield* Console.log(renderResult(result));
+			yield* emitRecords(result, {
+				shape: REDDIT_POST,
+				compact: config.compact,
+				fields: config.fields,
+			});
 		}),
 ).pipe(
 	Command.withShortDescription("Collect Reddit posts by URL."),
@@ -731,6 +955,8 @@ the community's name, description, member count and rank.
 
 Reddit blocks ordinary fetching, so this is the route to a post's
 content — do not try WebFetch first.
+
+${rawNote(REDDIT_POST)}
 
 A deleted or missing post comes back as a row with an \`error\` field
 rather than failing the call.`,
@@ -767,6 +993,8 @@ const redditCommentsCmd = Command.make(
 				"Comment ordering. Which comments --limit keeps depends on this.",
 			),
 		),
+		raw: rawFlag,
+		fields: fieldsFlag,
 		json: jsonFlag,
 	},
 	(config) =>
@@ -783,16 +1011,21 @@ const redditCommentsCmd = Command.make(
 					sortBy: Option.getOrUndefined(config.sort),
 				}),
 			);
-			yield* Console.log(renderResult(result));
+			yield* emitRecords(result, {
+				shape: REDDIT_COMMENT,
+				compact: !config.raw,
+				fields: config.fields,
+			});
 		}),
 ).pipe(
 	Command.withShortDescription("Collect the comments under a Reddit post."),
 	Command.withDescription(
 		`Collect comments from one or more Reddit posts.
 
-This is a different dataset from \`post\`, with its own record shape: one
-row per comment, carrying the comment text, author, score, reply count
-and nested replies.
+This is a different dataset from \`post\`, with its own record shape.
+${compactNote("comment", REDDIT_COMMENT)}
+
+replies is a count; the nested replies themselves are in --raw.
 
 --limit is required even though the URLs are known. A busy thread holds
 thousands of comments and each one is billed, so the count has to be
@@ -833,6 +1066,8 @@ const redditSearchCmd = Command.make(
 				"How far back to search. Omit to let Reddit choose its default window.",
 			),
 		),
+		raw: rawFlag,
+		fields: fieldsFlag,
 		json: jsonFlag,
 	},
 	(config) =>
@@ -851,19 +1086,27 @@ const redditSearchCmd = Command.make(
 					date: Option.getOrUndefined(config.date),
 				}),
 			);
-			yield* Console.log(renderResult(result));
+			yield* emitRecords(result, {
+				shape: REDDIT_POST,
+				compact: !config.raw,
+				fields: config.fields,
+			});
 		}),
 ).pipe(
 	Command.withShortDescription("Find Reddit posts by keyword."),
 	Command.withDescription(
 		`Search Reddit for posts matching a keyword.
 
-Returns the same records as \`post\`, found by searching rather than by
-URL. Unlike X, Reddit does support keyword search here, so this is the
+Finds the same records as \`post\`, by searching rather than by URL.
+Unlike X, Reddit does support keyword search here, so this is the
 direct route to "what is being said about X".
 
 --num-of-posts is required and is enforced twice: per keyword, and again
-as a server-side cap on the job.`,
+as a server-side cap on the job.
+
+${compactNote("post", REDDIT_POST)}
+
+text is the body, absent on a link post.`,
 	),
 	Command.withExamples([
 		{
@@ -893,6 +1136,8 @@ const redditSubredditCmd = Command.make(
 				"Which listing to read: Hot, New, Top or Rising. Decides which posts --limit keeps.",
 			),
 		),
+		raw: rawFlag,
+		fields: fieldsFlag,
 		json: jsonFlag,
 	},
 	(config) =>
@@ -910,21 +1155,27 @@ const redditSubredditCmd = Command.make(
 					sortBy: Option.getOrUndefined(config.sort),
 				}),
 			);
-			yield* Console.log(renderResult(result));
+			yield* emitRecords(result, {
+				shape: REDDIT_POST,
+				compact: !config.raw,
+				fields: config.fields,
+			});
 		}),
 ).pipe(
 	Command.withShortDescription("Read a subreddit's posts."),
 	Command.withDescription(
 		`Discover posts from one or more subreddits.
 
-Returns the same records as \`post\`. --sort chooses the listing, and it
+Finds the same records as \`post\`. --sort chooses the listing, and it
 is the difference between "what is popular now" (Hot), "what is new"
 (New) and "what did best over time" (Top).
 
 --limit applies per subreddit.
 
 The sort values are capitalised. The published docs list \`new\`, \`top\`
-and \`hot\`; the API rejects all three.`,
+and \`hot\`; the API rejects all three.
+
+${compactNote("post", REDDIT_POST)}`,
 	),
 	Command.withExamples([
 		{
@@ -934,7 +1185,7 @@ and \`hot\`; the API rejects all three.`,
 		},
 		{
 			command:
-				"infer bdata reddit subreddit https://www.reddit.com/r/rust/ --limit 10 --sort New | jq '.[].url'",
+				"infer bdata reddit subreddit https://www.reddit.com/r/rust/ --limit 10 --sort New --fields url",
 			description: "The 10 newest posts, as URLs",
 		},
 	]),
@@ -948,7 +1199,8 @@ const redditCmd = Command.make("reddit").pipe(
 		`Reddit data via Bright Data's Web Scraper API.
 
 \`post\`, \`search\` and \`subreddit\` all return post records; \`comments\`
-returns a different shape, one row per comment.
+returns a different shape, one row per comment. Every command but
+\`post\` prints compact records unless --raw.
 
 The usual pipeline is discovery then depth: find posts with \`search\` or
 \`subreddit\`, then pass the URLs you care about to \`comments\`, where the
@@ -999,6 +1251,8 @@ const chatgptCmd = Command.make(
 				"Fail the row rather than return an answer with no sources. Worth setting when you intend to fetch the citations.",
 			),
 		),
+		raw: rawFlag,
+		fields: fieldsFlag,
 		json: jsonFlag,
 	},
 	(config) =>
@@ -1013,7 +1267,11 @@ const chatgptCmd = Command.make(
 					requireSources: config.requireSources,
 				}),
 			);
-			yield* Console.log(renderResult(result));
+			yield* emitRecords(result, {
+				shape: CHATGPT_ANSWER,
+				compact: !config.raw,
+				fields: config.fields,
+			});
 		}),
 ).pipe(
 	Command.withShortDescription(
@@ -1022,8 +1280,11 @@ const chatgptCmd = Command.make(
 	Command.withDescription(
 		`Ask ChatGPT a question and get the answer back as data.
 
-Returns answer_text, answer_text_markdown and answer_html, plus
-citations with titles and URLs, and the model that answered.
+${compactNote("prompt", CHATGPT_ANSWER)}
+
+answer is the markdown answer. followUp and followUpAnswer appear only
+with --follow-up. The raw record is mostly answer_html, the whole
+ChatGPT page — around 750 KB for a one-sentence answer.
 
 Billed per prompt rather than per token, so the cost of a question does
 not depend on how long the answer turns out to be.
@@ -1046,7 +1307,7 @@ Web search is on by default and is what produces citations; add
 			description: "See what a German user would be told",
 		},
 		{
-			command: `infer bdata chatgpt "who makes the best AI CLI?" | jq -r '.citations[].url'`,
+			command: `infer bdata chatgpt "who makes the best AI CLI?" --fields citations.url`,
 			description: "Turn one question into a reading list",
 		},
 	]),
@@ -1063,6 +1324,7 @@ const linkedinCompanyCmd = Command.make(
 				"One or more LinkedIn company URLs, e.g. https://www.linkedin.com/company/bright-data.",
 			),
 		),
+		fields: fieldsFlag,
 		json: jsonFlag,
 	},
 	(config) =>
@@ -1072,7 +1334,7 @@ const linkedinCompanyCmd = Command.make(
 				{ datasetId: LINKEDIN_COMPANIES_DATASET },
 				urlInput(config.urls),
 			);
-			yield* Console.log(renderResult(result));
+			yield* emitRecords(result, { compact: false, fields: config.fields });
 		}),
 ).pipe(
 	Command.withShortDescription("Collect LinkedIn company records."),
@@ -1084,7 +1346,8 @@ founding year, industries, specialties, website, the about text, and
 where LinkedIn has it, funding rounds, investors, similar companies and
 affiliated pages.
 
-No limit flag: the number of URLs you pass is the limit.`,
+No limit flag: the number of URLs you pass is the limit. --fields keeps
+only the keys you name, under Bright Data's own names.`,
 	),
 	Command.withExamples([
 		{
@@ -1104,6 +1367,7 @@ const linkedinProfileCmd = Command.make(
 				"One or more LinkedIn people URLs, e.g. https://www.linkedin.com/in/username.",
 			),
 		),
+		fields: fieldsFlag,
 		json: jsonFlag,
 	},
 	(config) =>
@@ -1113,7 +1377,7 @@ const linkedinProfileCmd = Command.make(
 				{ datasetId: LINKEDIN_PROFILES_DATASET },
 				urlInput(config.urls),
 			);
-			yield* Console.log(renderResult(result));
+			yield* emitRecords(result, { compact: false, fields: config.fields });
 		}),
 ).pipe(
 	Command.withShortDescription("Collect LinkedIn people profiles."),
@@ -1122,7 +1386,8 @@ const linkedinProfileCmd = Command.make(
 
 Returns current position and company, the full experience and education
 history, skills, certifications, languages, connection and follower
-counts, and the about text.
+counts, and the about text. --fields keeps only the keys you name,
+under Bright Data's own names.
 
 This is personal data. Collect what a question actually needs rather
 than sweeping profiles up, and mind the obligations that come with
@@ -1154,6 +1419,8 @@ const linkedinPostsCmd = Command.make(
 				"People URLs only: drop reshares, keeping what the person actually wrote.",
 			),
 		),
+		raw: rawFlag,
+		fields: fieldsFlag,
 		json: jsonFlag,
 	},
 	(config) =>
@@ -1193,7 +1460,11 @@ const linkedinPostsCmd = Command.make(
 					authoredOnly: config.authoredOnly,
 				}),
 			);
-			yield* Console.log(renderResult(result));
+			yield* emitRecords(result, {
+				shape: LINKEDIN_POST,
+				compact: !config.raw,
+				fields: config.fields,
+			});
 		}),
 ).pipe(
 	Command.withShortDescription("Find LinkedIn posts from companies or people."),
@@ -1204,8 +1475,10 @@ The route is chosen from the URL: /company/ pages are discovered one
 way, /in/ people another. Both cannot be mixed in one call, and passing
 something that is neither is an error rather than an empty result.
 
-Returns the post text, type and date, likes and comments, hashtags,
-tagged companies and people, embedded links, and whether it is a repost.
+${compactNote("post", LINKEDIN_POST)}
+
+The raw record adds hashtags, tagged companies and people, embedded
+links, media, the top visible comments and the reposted post.
 
 --limit applies per URL. --start-date and --end-date take ISO
 timestamps. --authored-only drops reshares on the people route, which
@@ -1276,6 +1549,8 @@ const linkedinJobsCmd = Command.make(
 			Flag.optional,
 			Flag.withDescription("Restrict to one employer."),
 		),
+		raw: rawFlag,
+		fields: fieldsFlag,
 		json: jsonFlag,
 	},
 	(config) =>
@@ -1300,15 +1575,21 @@ const linkedinJobsCmd = Command.make(
 					company: Option.getOrUndefined(config.company),
 				}),
 			);
-			yield* Console.log(renderResult(result));
+			yield* emitRecords(result, {
+				shape: LINKEDIN_JOB,
+				compact: !config.raw,
+				fields: config.fields,
+			});
 		}),
 ).pipe(
 	Command.withShortDescription("Search LinkedIn job postings."),
 	Command.withDescription(
 		`Search LinkedIn job postings.
 
-Returns the title, company, location, summary, employment type,
-seniority, posted time, pay range where published, and the apply link.
+${compactNote("job", LINKEDIN_JOB)}
+
+salary appears where the posting publishes one. The full description
+(job_summary, several KB each) and the apply link are in --raw.
 
 --location is required, not --keyword: searching a place without a role
 is valid, a role without a place is not.
@@ -1327,7 +1608,7 @@ competitive-intelligence shape of this command.`,
 			description: "What one company started hiring for recently",
 		},
 		{
-			command: `infer bdata linkedin jobs --location Berlin --limit 20 --remote Remote | jq -r '.[].job_title'`,
+			command: `infer bdata linkedin jobs --location Berlin --limit 20 --remote Remote --fields title`,
 			description: "Remote roles, as a list of titles",
 		},
 	]),
@@ -1442,12 +1723,16 @@ const snapshotGetCmd = Command.make(
 		id: Argument.String("snapshot-id").pipe(
 			Argument.withDescription(SNAPSHOT_ID_NOTE),
 		),
+		fields: fieldsFlag,
 		json: jsonFlag,
 	},
 	(config) =>
 		Effect.gen(function* () {
 			const bdata = yield* Bdata;
-			yield* Console.log(renderResult(yield* bdata.snapshotData(config.id)));
+			yield* emitRecords(yield* bdata.snapshotData(config.id), {
+				compact: false,
+				fields: config.fields,
+			});
 		}),
 ).pipe(
 	Command.withShortDescription("Download a finished job's rows."),
@@ -1460,7 +1745,11 @@ running on Bright Data's side, so collect it here once it is ready
 rather than paying to run it again.
 
 Downloading a job that is not \`ready\` returns its status instead of
-rows.`,
+rows.
+
+Prints the rows as Bright Data stores them — the raw record, since a
+snapshot does not say which command made it. --fields keeps only the
+keys you name.`,
 	),
 	Command.withExamples([
 		{

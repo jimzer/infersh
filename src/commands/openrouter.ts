@@ -276,6 +276,11 @@ Prices are USD per million tokens, input and output. Context is the
 model's headline window — the provider actually serving it may offer
 less, which \`infer openrouter endpoints\` reveals.
 
+--json prints {models: [...]}, one per model:
+
+  {id, name, description, contextLength, inputPrice, outputPrice,
+   modality, supportedParameters, reasoning}
+
 Needs no API key.`,
 	),
 	Command.withExamples([
@@ -346,6 +351,11 @@ catalogue's headline figure.
 
 Uptime is the percentage over the last 30 minutes. Latency and
 throughput are not published by this API, so they are not shown.
+
+--json prints {model, endpoints: [...]}, one per provider:
+
+  {provider, contextLength, inputPrice, outputPrice, quantization,
+   uptime, maxCompletionTokens}
 
 Needs no API key.`,
 	),

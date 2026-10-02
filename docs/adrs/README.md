@@ -33,6 +33,7 @@ time to discover and would otherwise be rediscovered the hard way.
 | [26](0026-ui-serves-one-prebuilt-page.md) | `ui` serves one prebuilt page, gzipped, and reports over stdout |
 | [27](0027-shot-captures-live-pages-through-the-render-worker.md) | `infer shot` captures live pages through the render worker |
 | [28](0028-each-keeps-results-by-filled-command.md) | `infer each` keeps results by filled command, and runs without a shell |
+| [29](0029-compact-listing-shapes-and-fields.md) | Listing commands print compact shapes, with `--raw` and `--fields` |
 | [30](0030-media-ffmpeg-jobs-with-correct-defaults.md) | `infer media`: ffmpeg jobs with the defaults decided once |
 | [31](0031-fetch-fal-specs-ourselves-parser-only-dereferences.md) | Fetch fal specs ourselves; the OpenAPI parser only dereferences |
 | [32](0032-signals-interrupt-the-whole-cli.md) | Signals interrupt the whole CLI |

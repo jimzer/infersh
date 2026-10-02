@@ -99,7 +99,9 @@ With no flags, lists what is available. Filters narrow the list, and
 --endpoint-id looks up exact IDs instead of searching.
 
 Prints one endpoint ID per line with its category, so results pipe
-straight into other commands. Use --json for the full metadata.
+straight into other commands. Use --json for the full metadata, as fal
+returns it: {models: [{endpoint_id, metadata: {display_name, category,
+description, status, ...}}], has_more, next_cursor}.
 
 An API key is optional here; providing one only raises the rate limit.`,
 	),
