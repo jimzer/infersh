@@ -35,3 +35,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Claude Code agent worktrees: separate checkouts, never part of this one
 .claude/worktrees/
+
+# Recordings and uploads made while running the CLI from the repo
+meetings/
+uploads/

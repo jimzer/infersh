@@ -2,16 +2,24 @@
  * `infer meeting` — record a meeting and transcribe it.
  */
 
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { Console, Effect, Option } from "effect";
 import { Command, Flag } from "effect/cli";
 import { record, transcribe } from "../meeting.ts";
 import { emitJson, jsonFlag } from "../output.ts";
 
-/** meetings/2026-10-02-1430, in local time. */
+/**
+ * ~/Documents/infer/meetings/2026-10-02-1430, in local time. Outside the
+ * working directory on purpose: a recording is private and large, and one
+ * started from inside a repository must not end up in its commits.
+ */
 const defaultDir = (now: Date): string => {
 	const pad = (n: number) => String(n).padStart(2, "0");
 	return join(
+		homedir(),
+		"Documents",
+		"infer",
 		"meetings",
 		`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`,
 	);
@@ -25,7 +33,7 @@ export const meetingCmd = Command.make(
 			Flag.withMetavar("dir"),
 			Flag.optional,
 			Flag.withDescription(
-				"Folder for the recording and transcript. Defaults to meetings/<date-time>.",
+				"Folder for the recording and transcript. Defaults to ~/Documents/infer/meetings/<date-time>.",
 			),
 		),
 		from: Flag.String("from").pipe(
@@ -152,7 +160,8 @@ Requires a Groq API key.`,
 			description: "Name the two sides",
 		},
 		{
-			command: "infer meeting --from meetings/2026-10-02-1430",
+			command:
+				"infer meeting --from ~/Documents/infer/meetings/2026-10-02-1430",
 			description: "Transcribe a recording made earlier",
 		},
 	]),

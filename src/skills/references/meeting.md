@@ -7,14 +7,17 @@ time-ordered transcript labelled by track. macOS 15+ only.
 ```bash
 infer meeting --me Jimi --them Client --language fr   # records until Enter or Ctrl-C
 infer meeting --duration 45                            # or stops after 45 minutes
-infer meeting --from meetings/2026-10-02-1430          # transcribe an earlier recording again
+infer meeting --from ~/Documents/infer/meetings/2026-10-02-1430   # transcribe an earlier recording again
 ```
 
 - **It is interactive and long-running**: it records until the user presses
   Enter or Ctrl-C. Start it in a terminal the user controls, or pass
   `--duration` when running it yourself. Ctrl-C stops the recording and still
   transcribes; it does not abort.
-- stdout is the path of `transcript.md`. The folder also holds the two audio
+- stdout is the path of `transcript.md`. Recordings go to
+  `~/Documents/infer/meetings/<date-time>/` unless `-o` says otherwise —
+  outside the working directory, so a private recording never lands in a
+  repository. The folder also holds the two audio
   tracks (`mic.caf`, `system.caf`, 16 kHz), Groq's raw response per track
   (`mic.transcript.json`, `system.transcript.json`) and `transcript.json`.
 - **Speaker labels come from the tracks, not diarization**: `--me` is the
