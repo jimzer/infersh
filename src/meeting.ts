@@ -460,6 +460,9 @@ Write, in this order:
 timestamps, with filler words, false starts and repetitions removed and
 punctuation fixed. Keep every point that was made.
 
+Write everything in the language the meeting was held in: translate the section
+headings above too (in French: Résumé, Décisions, Actions, Questions ouvertes,
+Transcription).
 Answer with the Markdown only.`;
 
 export const notes = Effect.fn("Meeting.notes")(function* (
