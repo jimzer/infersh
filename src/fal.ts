@@ -132,6 +132,22 @@ export const extractInputSchema = (spec: unknown): InputSchema | null => {
 export const specUrl = (endpointId: string): string =>
 	`${SPEC_URL}?endpoint_id=${encodeURIComponent(endpointId)}`;
 
+/** The parser's document type, which it does not export. */
+type OpenApiDocument = Exclude<Parameters<typeof dereference>[0], string>;
+
+const OpenApiShape = Schema.Struct({
+	openapi: Schema.String,
+	paths: Schema.Record(Schema.String, Schema.Unknown),
+});
+
+/**
+ * Checked with `Schema.is`, not decoded: the whole document goes on to the
+ * parser untouched, and the parser rejects anything that is not really
+ * OpenAPI. This only rules out what fal returns instead of a spec.
+ */
+const isOpenApiDocument = (value: unknown): value is OpenApiDocument =>
+	Schema.is(OpenApiShape)(value);
+
 // --- Local asset uploading ------------------------------------------------
 
 /**
@@ -474,13 +490,35 @@ const make = (options: {
 				return body;
 			}),
 
+		// Fetched here rather than by handing the parser the URL: since 7.0 the
+		// parser's own downloader pins DNS through `undici`, whose Bun stand-in
+		// lacks `Agent#destroy`, so every URL fetch fails under Bun. See ADR 31.
 		fetchSpec: (endpointId) =>
-			Effect.tryPromise({
-				try: () => dereference(specUrl(endpointId)),
-				catch: (cause) =>
+			Effect.gen(function* () {
+				const failed = (detail: unknown) =>
 					new FalError({
-						reason: `Could not fetch the schema for ${endpointId}: ${cause}`,
-					}),
+						reason: `Could not fetch the schema for ${endpointId}: ${detail}`,
+					});
+				const response = yield* http
+					.get(specUrl(endpointId), {
+						headers: { Accept: "application/json" },
+					})
+					.pipe(Effect.mapError(failed));
+				if (response.status >= 400) {
+					return yield* Effect.fail(failed(`HTTP ${response.status}`));
+				}
+				const body = yield* response.json.pipe(Effect.mapError(failed));
+				if (!isOpenApiDocument(body)) {
+					return yield* Effect.fail(
+						failed(
+							`not an OpenAPI document: ${JSON.stringify(body).slice(0, 300)}`,
+						),
+					);
+				}
+				return yield* Effect.tryPromise({
+					try: () => dereference(body),
+					catch: failed,
+				});
 			}),
 
 		upload,
