@@ -70,7 +70,7 @@ const sharedFlags = {
 	share: Flag.Boolean("share").pipe(
 		Flag.withDefault(false),
 		Flag.withDescription(
-			"Publish to your tailnet over HTTPS with `tailscale serve`, so the page opens on your phone. The server itself stays on localhost. Cleared again when the command ends.",
+			"Also publish the page on your tailnet over HTTPS, for opening it on another device such as a phone. Off by default: without it the page is on localhost, which is all you need at this computer. Needs Tailscale; the share ends with the command and leaves other `tailscale serve` rules alone.",
 		),
 	),
 	open: Flag.Boolean("open").pipe(

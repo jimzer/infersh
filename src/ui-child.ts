@@ -90,6 +90,16 @@ const server = Bun.serve({
 
 await Bun.write(job.readyPath, JSON.stringify({ port: server.port }));
 
+// The parent holds this process's stdin open and never writes to it. However
+// the parent ends — even kill -9, which no cleanup code can catch — the OS
+// closes it, and the server must not outlive the command that started it.
+void (async () => {
+	for await (const _ of Bun.stdin.stream()) {
+		// Nothing is ever sent; only the end matters.
+	}
+	process.exit(0);
+})();
+
 setTimeout(() => {
 	void finish("timeout", null);
 }, job.timeoutMs);

@@ -120,18 +120,25 @@ pretend the work was reviewed.
 `cancelled` and `timeout` are different: one is a decision, the other is
 silence. Treat them differently.
 
-## Getting it onto a phone
+## Local by default; `--share` only for another device
+
+By default the page is served on `http://127.0.0.1:…`, with no Tailscale
+involved. **That is right whenever the user is at this computer**: give them
+the link, or pass `--open` to open it in their browser. A localhost page is a
+secure context, so the clipboard and every other browser API work.
+
+Add `--share` only when the user will open the page on **another device** — a
+phone, another laptop:
 
 ```bash
 infer ui ask ./pick.tsx --data posts.json --share
 ```
 
-`--share` publishes through `tailscale serve`, giving an HTTPS URL on the
-user's tailnet. The server itself stays on localhost, and the share is cleared
-when the command ends. Needs Tailscale running on the machine.
-
-Prefer it whenever the page might be read away from the desk, and whenever the
-page copies text — HTTPS is what makes `navigator.clipboard` work at all.
+It publishes through `tailscale serve` in the foreground, giving an HTTPS URL
+on the user's tailnet; the server itself stays on localhost. The share lives
+exactly as long as the command — it never touches other `tailscale serve`
+rules, several can run at once, and nothing is left behind however the command
+ends. Needs Tailscale on this machine and on the device opening the link.
 
 ## Traps
 

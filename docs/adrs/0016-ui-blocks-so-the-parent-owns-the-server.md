@@ -58,9 +58,31 @@ exposes the listener to every network the machine is on. `serve` keeps the
 process on loopback, applies tailnet ACLs, and gives HTTPS — which is not
 cosmetic: a plain-IP page is not a secure context, so `navigator.clipboard` is
 unavailable, and "copy this draft" is the most obvious button on a review page.
-The `--bg` config lives in `tailscaled` and outlives the process, so it is
-cleared on start as well as on exit; a hard kill would otherwise leave it
-proxying a dead port forever.
+The share originally ran with `--bg`, whose config lives in `tailscaled` and
+outlives the process, so it was cleared with `tailscale serve reset` on start
+and exit. That deleted **every** serve rule on the machine, not just ours, and
+two concurrent shares on port 443 clobbered each other.
+
+It now runs in the **foreground**, on an HTTPS port of its own (the local port's
+number, already unique): a foreground share exists exactly as long as its
+process and never enters the persistent config, so there is nothing to reset.
+Verified with three concurrent shares beside a pre-existing `--bg` rule: all
+three answered through their tailnet URLs, and the existing rule survived.
+Starting shares in the same instant can fail with tailscaled's "Another client
+is changing the serve config; please try again", so that answer is retried
+with jittered backoff.
+
+**Nothing outlives the command, even a kill -9.** The page server and the
+share both watch a stdin pipe the CLI holds open and never writes to; however
+the CLI ends, the OS closes it and they exit. The share needs a small `sh`
+wrapper for that, since `tailscale serve` has no notion of its parent. Before
+this, a hard kill left the page server running until its timeout and the share
+proxying a dead port indefinitely.
+
+A localhost page is already a secure context — clipboard included, verified
+in Chrome — so `--share` is only for opening the page on another device. The
+skill had told agents to prefer it whenever a page copies text, which was
+wrong.
 
 Every page also gets two things it did not ask for: a raw-JSON textarea in the
 bottom bar, and a `window.onerror` hook that POSTs to the server so page errors

@@ -22,8 +22,11 @@ import {
 	Effect,
 	type FileSystem,
 	Layer,
+	Option,
 	Schedule,
 	Schema,
+	type Scope,
+	Stream,
 } from "effect";
 import { ChildProcess, type ChildProcessSpawner } from "effect/process";
 import { escapeForScript, inlineScript } from "./html.ts";
@@ -307,65 +310,142 @@ export const flattenApp = (
  * `https://…ts.net/` it is now proxying.
  */
 export const parseServeUrl = (output: string): string | null =>
-	output.match(/https:\/\/[a-z0-9.-]+\.ts\.net\/?/i)?.[0].replace(/\/$/, "") ??
-	null;
+	output
+		.match(/https:\/\/[a-z0-9.-]+\.ts\.net(:\d+)?\/?/i)?.[0]
+		.replace(/\/$/, "") ?? null;
 
-const runTailscale = (
-	args: ReadonlyArray<string>,
+/**
+ * Shares the local server on the tailnet over HTTPS, for as long as this run.
+ *
+ * `serve` rather than binding the tailnet address: the server stays on
+ * loopback, never exposed to whatever other network this machine is on, and
+ * HTTPS makes the page a secure context, which the clipboard API needs on a
+ * phone.
+ *
+ * In the foreground, on an HTTPS port of its own — the local port's number,
+ * which the OS already made unique. A foreground share lasts exactly as long
+ * as its process, never enters the persistent serve config, and the process is
+ * scoped to this run. The earlier `--bg` share needed `tailscale serve reset`
+ * at start and exit, which deleted every other serve rule on the machine, and
+ * let two concurrent shares on port 443 clobber each other.
+ */
+/**
+ * Runs the foreground share, and stops it when our stdin closes.
+ *
+ * `tailscale serve` has no notion of its parent, so a kill -9 of this CLI
+ * would leave it proxying a dead port forever. The wrapper holds a copy of the
+ * stdin pipe this process keeps open; however this process ends, the OS closes
+ * the pipe, `cat` returns, and the share is stopped. A TERM or INT — Effect
+ * ending the scope — stops it through the trap instead. The explicit `<&3`
+ * matters: POSIX gives a background job `/dev/null` as stdin otherwise, and
+ * `cat` would return at once.
+ */
+const SHARE_SCRIPT = `
+exec 3<&0
+tailscale serve --https="$1" "http://127.0.0.1:$1" &
+t=$!
+trap 'kill "$t" 2>/dev/null' INT TERM
+(cat <&3 >/dev/null; kill "$t" 2>/dev/null) >/dev/null 2>&1 &
+wait "$t"
+`;
+
+const shareOnce = (
+	port: number,
 ): Effect.Effect<
-	{ stdout: string; code: number },
-	UiError,
-	ChildProcessSpawner.ChildProcessSpawner
+	string,
+	UiError | ShareBusy,
+	ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
 > =>
-	run("tailscale", args).pipe(
-		Effect.map((result) => ({
-			stdout: `${result.stdout}\n${result.stderr}`,
-			code: result.code,
-		})),
-		Effect.mapError(
-			() =>
+	Effect.gen(function* () {
+		const handle = yield* ChildProcess.make(
+			"sh",
+			["-c", SHARE_SCRIPT, "infer-share", String(port)],
+			{ stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+		).pipe(
+			Effect.mapError(
+				() =>
+					new UiError({
+						reason:
+							"--share needs the tailscale command, which is not on PATH.\nInstall Tailscale, or drop --share to stay on localhost.",
+					}),
+			),
+		);
+
+		// It prints the URL, then blocks until it is stopped.
+		const found = yield* handle.stdout.pipe(
+			Stream.decodeText(),
+			Stream.scan(
+				() => "",
+				(seen: string, chunk: string) => seen + chunk,
+			),
+			Stream.map(parseServeUrl),
+			Stream.filter((url): url is string => url !== null),
+			Stream.runHead,
+			Effect.timeout("15 seconds"),
+			Effect.orElseSucceed(() => Option.none<string>()),
+		);
+		if (Option.isSome(found)) return found.value;
+
+		// It exited or stalled without a URL: HTTPS certificates not enabled for
+		// the tailnet, logged out, and so on — tailscale says which on stderr.
+		const why = yield* handle.stderr.pipe(
+			Stream.decodeText(),
+			Stream.mkString,
+			Effect.timeout("2 seconds"),
+			Effect.orElseSucceed(() => ""),
+		);
+		const reason = why
+			.split("\n")
+			.filter((line) => line.trim() !== "" && !line.includes("client version"))
+			.join("\n");
+		if (/tailscale: (command )?not found/i.test(reason)) {
+			return yield* Effect.fail(
 				new UiError({
 					reason:
 						"--share needs the tailscale command, which is not on PATH.\nInstall Tailscale, or drop --share to stay on localhost.",
 				}),
-		),
-	);
-
-/**
- * Proxies the local port onto the tailnet over HTTPS.
- *
- * `serve` rather than binding the tailnet address directly: the process stays
- * on loopback so it is never exposed to whatever other network this machine
- * is on, and HTTPS makes the page a secure context, which is what the
- * clipboard API requires on a phone.
- */
-const startShare = (
-	port: number,
-): Effect.Effect<string, UiError, ChildProcessSpawner.ChildProcessSpawner> =>
-	Effect.gen(function* () {
-		// `--bg` config lives in tailscaled and outlives this process, so a run
-		// killed hard would leave it behind. Clearing first makes it idempotent.
-		yield* runTailscale(["serve", "reset"]);
-		const result = yield* runTailscale([
-			"serve",
-			"--bg",
-			"--https=443",
-			`http://127.0.0.1:${port}`,
-		]);
-		const url = parseServeUrl(result.stdout);
-		if (result.code !== 0 || url === null) {
-			return yield* Effect.fail(
-				new UiError({
-					reason: `Could not share over the tailnet:\n${result.stdout.trim()}`,
-				}),
 			);
 		}
-		return url;
+		if (/try again|etag mismatch/i.test(reason)) {
+			return yield* Effect.fail(new ShareBusy({ reason }));
+		}
+		return yield* Effect.fail(
+			new UiError({
+				reason: `Could not share over the tailnet:\n${reason || "tailscale serve printed no URL."}`,
+			}),
+		);
 	});
 
-const stopShare = Effect.gen(function* () {
-	yield* runTailscale(["serve", "reset"]).pipe(Effect.catch(() => Effect.void));
-});
+/**
+ * Starting two shares in the same instant collides on tailscaled's config
+ * update — "Another client is changing the serve config; please try again" —
+ * so that answer is retried, with jitter so simultaneous starts spread out.
+ */
+class ShareBusy extends Data.TaggedError("ShareBusy")<{
+	readonly reason: string;
+}> {}
+
+const share = (
+	port: number,
+): Effect.Effect<
+	string,
+	UiError,
+	ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+> =>
+	shareOnce(port).pipe(
+		Effect.retry({
+			schedule: Schedule.exponential("200 millis").pipe(Schedule.jittered),
+			times: 6,
+			while: (error) => error._tag === "ShareBusy",
+		}),
+		Effect.catchTag("ShareBusy", (busy) =>
+			Effect.fail(
+				new UiError({
+					reason: `Could not share over the tailnet:\n${busy.reason}`,
+				}),
+			),
+		),
+	);
 
 // --- running --------------------------------------------------------------
 
@@ -469,6 +549,9 @@ const make = (platform: Context.Context<Platform>): UiShape => ({
 			// an answer, a failure, or Ctrl-C.
 			const server = yield* ChildProcess.make("bun", ["run", childPath, job], {
 				cwd: dir,
+				// Held open and never written: the child exits when it closes,
+				// which happens even if this process is killed with -9.
+				stdin: "pipe",
 				stdout: "inherit",
 				stderr: "inherit",
 			});
@@ -477,31 +560,25 @@ const make = (platform: Context.Context<Platform>): UiShape => ({
 				server.isRunning.pipe(Effect.orElseSucceed(() => false)),
 			);
 
-			const url = yield* Effect.acquireUseRelease(
-				request.share
-					? startShare(port)
-					: Effect.succeed(`http://127.0.0.1:${port}`),
-				(base) =>
-					Effect.gen(function* () {
-						const full = `${base}/${token}`;
-						yield* Console.error(`\n  ${full}\n`);
-						yield* Console.error(
-							`  Waiting for you — ${describeTimeout(request.timeoutMs)} timeout, Ctrl-C to give up.`,
-						);
-						if (request.open) yield* openInBrowser(full);
-
-						const code = yield* server.exitCode;
-						if (code !== 0) {
-							return yield* Effect.fail(
-								new UiError({
-									reason: "The page server failed; see the output above.",
-								}),
-							);
-						}
-						return full;
-					}),
-				() => (request.share ? stopShare : Effect.void),
+			// Scoped like the server: the share ends when this run does.
+			const base = request.share
+				? yield* share(port)
+				: `http://127.0.0.1:${port}`;
+			const url = `${base}/${token}`;
+			yield* Console.error(`\n  ${url}\n`);
+			yield* Console.error(
+				`  Waiting for you — ${describeTimeout(request.timeoutMs)} timeout, Ctrl-C to give up.`,
 			);
+			if (request.open) yield* openInBrowser(url);
+
+			const code = yield* server.exitCode;
+			if (code !== 0) {
+				return yield* Effect.fail(
+					new UiError({
+						reason: "The page server failed; see the output above.",
+					}),
+				);
+			}
 
 			const answer = yield* readFile(resultPath).pipe(
 				Effect.flatMap(Schema.decodeUnknownEffect(Answer)),

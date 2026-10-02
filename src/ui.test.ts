@@ -105,6 +105,15 @@ describe("parseServeUrl", () => {
 		).toBe("https://box.tail2527fa.ts.net");
 	});
 
+	test("keeps the port a foreground share prints", () => {
+		// Each share runs on its own HTTPS port, so the port is part of the URL.
+		expect(
+			parseServeUrl(
+				"Available within your tailnet:\n\nhttps://box.tail2527fa.ts.net:62768/\n|-- proxy http://127.0.0.1:62768\n\nPress Ctrl+C to exit.\n",
+			),
+		).toBe("https://box.tail2527fa.ts.net:62768");
+	});
+
 	test("returns null when sharing failed, so the caller can report it", () => {
 		expect(parseServeUrl("command not found: tailscale")).toBeNull();
 	});
