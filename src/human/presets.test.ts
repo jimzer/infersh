@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseFormFields, toItems } from "./presets.ts";
+import { defaultUploadDir, parseFormFields, toItems } from "./presets.ts";
 
 describe("toItems", () => {
 	test("strings and numbers are their own label, answered by position", () => {
@@ -89,6 +89,14 @@ describe("parseFormFields", () => {
 		);
 		expect(parseFormFields([{ name: "tone", type: "select" }])).toContain(
 			"no options",
+		);
+	});
+});
+
+describe("defaultUploadDir", () => {
+	test("is uploads/<date-time> in local time, the shape meeting uses", () => {
+		expect(defaultUploadDir(new Date(2026, 9, 2, 9, 5))).toBe(
+			"uploads/2026-10-02-0905",
 		);
 	});
 });

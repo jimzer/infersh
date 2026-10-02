@@ -54,8 +54,14 @@ import { TAILWIND_NAME, TAILWIND_PACKAGE } from "./tailwind.ts";
 // directory. This file must therefore never be imported normally.
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import childSource from "./ui-child.ts" with { type: "text" };
+// The child's one import, written beside it. Only its types may be imported
+// normally: Bun's bundler refuses one file as both text and a module.
+// @ts-expect-error text import: Bun inlines the file contents as a string
+import uploadSource from "./ui-upload.ts" with { type: "text" };
+import type { UploadRules } from "./ui-upload.ts";
 
 const CHILD_SOURCE: string = childSource;
+const UPLOAD_SOURCE: string = uploadSource;
 
 export class UiError extends Data.TaggedError("UiError")<{
 	readonly reason: string;
@@ -90,6 +96,11 @@ export interface UiRequest {
 	readonly tailwind: boolean;
 	readonly head?: string;
 	readonly open: boolean;
+	/**
+	 * Lets the page send files, streamed into `upload.dir`. The answer's
+	 * payload then lists the saved files rather than what the page sent.
+	 */
+	readonly upload?: UploadRules;
 }
 
 export interface UiShape {
@@ -521,11 +532,13 @@ const make = (platform: Context.Context<Platform>): UiShape => ({
 
 			const childPath = join(dir, "ui-child.ts");
 			yield* writeFile(childPath, CHILD_SOURCE);
+			yield* writeFile(join(dir, "ui-upload.ts"), UPLOAD_SOURCE);
 			const job = JSON.stringify({
 				token,
 				port: request.port,
 				timeoutMs: request.timeoutMs,
 				pagePath,
+				upload: request.upload,
 			});
 			const started = Date.now();
 

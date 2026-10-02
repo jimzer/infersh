@@ -74,6 +74,16 @@ export type PresetData =
 			readonly kind: "form";
 			readonly prompt?: string;
 			readonly fields: ReadonlyArray<FormField>;
+	  }
+	| {
+			readonly kind: "upload";
+			readonly prompt?: string;
+			/** `accept` tokens, already split: `.pdf`, `image/*`. */
+			readonly accept: ReadonlyArray<string>;
+			readonly maxFiles?: number;
+			readonly maxBytes?: number;
+			/** Whether to offer a note beside the files. */
+			readonly note: boolean;
 	  };
 
 /** Anything shown as text: strings as they are, structures as indented JSON. */
@@ -167,3 +177,62 @@ export const parseFormFields = (
 				: `--fields: "${empty.name}" is a select with no options.`;
 		},
 	});
+
+/**
+ * Splits an `--accept` list the way the HTML attribute reads it; a bare `pdf`
+ * is taken as `.pdf`.
+ */
+export const parseAccept = (text: string): ReadonlyArray<string> =>
+	text
+		.split(",")
+		.map((token) => token.trim().toLowerCase())
+		.filter((token) => token !== "")
+		.map((token) =>
+			token.startsWith(".") || token.includes("/") ? token : `.${token}`,
+		);
+
+const UNITS: Readonly<Record<string, number>> = {
+	"": 1,
+	b: 1,
+	k: 1024,
+	kb: 1024,
+	kib: 1024,
+	m: 1024 ** 2,
+	mb: 1024 ** 2,
+	mib: 1024 ** 2,
+	g: 1024 ** 3,
+	gb: 1024 ** 3,
+	gib: 1024 ** 3,
+	t: 1024 ** 4,
+	tb: 1024 ** 4,
+	tib: 1024 ** 4,
+};
+
+/** `25MB`, `1.5 GB`, `500k` or plain bytes, in powers of 1024. */
+export const parseSize = (text: string): number | undefined => {
+	const match = /^\s*(\d+(?:\.\d+)?)\s*([a-z]*)\s*$/i.exec(text);
+	const factor = UNITS[(match?.[2] ?? "").toLowerCase()];
+	if (!match || factor === undefined) return undefined;
+	const bytes = Math.floor(Number(match[1]) * factor);
+	return bytes > 0 ? bytes : undefined;
+};
+
+/** `uploads/2026-10-02-1643`, in local time — the shape `meeting` uses. */
+export const defaultUploadDir = (now: Date): string => {
+	const pad = (n: number) => String(n).padStart(2, "0");
+	return `uploads/${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+};
+
+/** What the page server answers an upload with, once the files are saved. */
+export const UploadAnswer = Schema.Struct({
+	files: Schema.Array(
+		Schema.Struct({
+			path: Schema.String,
+			name: Schema.String,
+			size: Schema.Finite,
+			type: Schema.String,
+		}),
+	),
+	note: Schema.optional(Schema.String),
+});
+export type UploadAnswer = typeof UploadAnswer.Type;

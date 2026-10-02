@@ -1,6 +1,7 @@
 /// <reference lib="dom" />
 /**
- * The built-in page behind `infer human pick | approve | rank | edit | form`.
+ * The built-in page behind `infer human pick | approve | rank | edit | form |
+ * upload`.
  *
  * One page for every kind, switching on `infer.data.kind`. It goes through the
  * same pipeline as a page an agent writes — flattened, bundled with React and
@@ -13,7 +14,14 @@
  * in `src/skills/references/human.md`.
  */
 
-import { type ReactNode, useMemo, useState } from "react";
+import {
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { createRoot } from "react-dom/client";
 
 interface Item {
@@ -42,7 +50,15 @@ type Data =
 	  }
 	| { kind: "approve" | "rank"; prompt?: string; items: ReadonlyArray<Item> }
 	| { kind: "edit"; prompt?: string; text: string }
-	| { kind: "form"; prompt?: string; fields: ReadonlyArray<FormField> };
+	| { kind: "form"; prompt?: string; fields: ReadonlyArray<FormField> }
+	| {
+			kind: "upload";
+			prompt?: string;
+			accept: ReadonlyArray<string>;
+			maxFiles?: number;
+			maxBytes?: number;
+			note: boolean;
+	  };
 
 declare global {
 	interface Window {
@@ -547,6 +563,349 @@ function Form(props: {
 	);
 }
 
+// --- upload ------------------------------------------------------------------
+
+/** One file the human added, and how far it has got. */
+interface Sending {
+	readonly key: number;
+	readonly file: File;
+	readonly state: "queued" | "sending" | "done" | "failed";
+	readonly loaded: number;
+	/** The server's id for it, once saved. */
+	readonly id?: string;
+	readonly error?: string;
+}
+
+/** How many files stream at once: enough to fill the link, few enough to finish. */
+const PARALLEL = 3;
+
+/** The token is the page's own path, and the server wants it back on every call. */
+const TOKEN = location.pathname.split("/").filter(Boolean).pop() ?? "";
+
+const formatSize = (bytes: number): string => {
+	for (const [unit, size] of [
+		["GB", 1024 ** 3],
+		["MB", 1024 ** 2],
+		["KB", 1024],
+	] as const) {
+		if (bytes >= size) return `${Number((bytes / size).toFixed(1))} ${unit}`;
+	}
+	return `${bytes} B`;
+};
+
+/**
+ * The server's rule, restated so a wrong file is refused before it is sent.
+ * A file the browser gives no type is left to the server, which can still
+ * tell it by its extension.
+ */
+const accepts = (accept: ReadonlyArray<string>, file: File): boolean =>
+	accept.length === 0 ||
+	accept.some((token) =>
+		token.startsWith(".")
+			? file.name.toLowerCase().endsWith(token)
+			: file.type === "" ||
+				(token.endsWith("/*")
+					? file.type.toLowerCase().startsWith(token.slice(0, -1))
+					: file.type.toLowerCase() === token),
+	);
+
+function Upload(props: {
+	readonly prompt?: string;
+	readonly accept: ReadonlyArray<string>;
+	readonly maxFiles?: number;
+	readonly maxBytes?: number;
+	readonly note: boolean;
+}) {
+	const [files, setFiles] = useState<ReadonlyArray<Sending>>([]);
+	const [note, setNote] = useState("");
+	const [dragging, setDragging] = useState(false);
+	const requests = useRef(new Map<number, XMLHttpRequest>());
+	const nextKey = useRef(0);
+
+	const update = useCallback(
+		(key: number, change: Partial<Sending>) =>
+			setFiles((current) =>
+				current.map((entry) =>
+					entry.key === key ? { ...entry, ...change } : entry,
+				),
+			),
+		[],
+	);
+
+	const add = useCallback(
+		(incoming: ReadonlyArray<File>) =>
+			setFiles((current) => {
+				let live = current.filter((entry) => entry.state !== "failed").length;
+				const added = incoming.map((file): Sending => {
+					const key = nextKey.current++;
+					const refuse = (error: string): Sending => ({
+						key,
+						file,
+						state: "failed",
+						loaded: 0,
+						error,
+					});
+					if (!accepts(props.accept, file)) {
+						return refuse(`Not accepted: only ${props.accept.join(", ")}.`);
+					}
+					if (props.maxBytes !== undefined && file.size > props.maxBytes) {
+						return refuse(
+							`Too large: the limit is ${formatSize(props.maxBytes)}.`,
+						);
+					}
+					if (props.maxFiles !== undefined && live >= props.maxFiles) {
+						return refuse(
+							`Too many: at most ${props.maxFiles} file${props.maxFiles === 1 ? "" : "s"}.`,
+						);
+					}
+					live++;
+					return { key, file, state: "queued", loaded: 0 };
+				});
+				return [...current, ...added];
+			}),
+		[props.accept, props.maxBytes, props.maxFiles],
+	);
+
+	// Each file streams as soon as there is room, so most are already on the
+	// other machine by the time the human presses Send.
+	useEffect(() => {
+		const sending = files.filter((entry) => entry.state === "sending").length;
+		const start = files
+			.filter((entry) => entry.state === "queued")
+			.slice(0, Math.max(0, PARALLEL - sending));
+		for (const entry of start) {
+			const request = new XMLHttpRequest();
+			requests.current.set(entry.key, request);
+			request.open("POST", "/api/upload");
+			request.setRequestHeader("x-infer-token", TOKEN);
+			request.setRequestHeader(
+				"x-infer-name",
+				encodeURIComponent(entry.file.name),
+			);
+			if (entry.file.type) {
+				request.setRequestHeader("x-infer-type", entry.file.type);
+			}
+			request.upload.onprogress = (event) =>
+				update(entry.key, { loaded: event.loaded });
+			request.onload = () => {
+				requests.current.delete(entry.key);
+				let body: { id?: string; error?: string } = {};
+				try {
+					body = JSON.parse(request.responseText);
+				} catch {}
+				update(
+					entry.key,
+					request.status === 200 && body.id
+						? { state: "done", id: body.id, loaded: entry.file.size }
+						: {
+								state: "failed",
+								error: body.error ?? `Not sent (${request.status}).`,
+							},
+				);
+			};
+			request.onerror = () => {
+				requests.current.delete(entry.key);
+				update(entry.key, {
+					state: "failed",
+					error: "The connection dropped. Remove it and add it again.",
+				});
+			};
+			request.send(entry.file);
+		}
+		if (start.length > 0) {
+			const keys = new Set(start.map((entry) => entry.key));
+			setFiles((current) =>
+				current.map((entry) =>
+					keys.has(entry.key) ? { ...entry, state: "sending" } : entry,
+				),
+			);
+		}
+	}, [files, update]);
+
+	// The whole page takes a drop, so a file that misses the box is not
+	// opened by the browser in place of the page.
+	useEffect(() => {
+		const over = (event: DragEvent) => {
+			event.preventDefault();
+			setDragging(true);
+		};
+		const leave = (event: DragEvent) => {
+			if (event.relatedTarget === null) setDragging(false);
+		};
+		const drop = (event: DragEvent) => {
+			event.preventDefault();
+			setDragging(false);
+			add(Array.from(event.dataTransfer?.files ?? []));
+		};
+		window.addEventListener("dragover", over);
+		window.addEventListener("dragleave", leave);
+		window.addEventListener("drop", drop);
+		return () => {
+			window.removeEventListener("dragover", over);
+			window.removeEventListener("dragleave", leave);
+			window.removeEventListener("drop", drop);
+		};
+	}, [add]);
+
+	const remove = (entry: Sending) => {
+		requests.current.get(entry.key)?.abort();
+		requests.current.delete(entry.key);
+		if (entry.id) {
+			void fetch(`/api/upload/${encodeURIComponent(entry.id)}`, {
+				method: "DELETE",
+				headers: { "x-infer-token": TOKEN },
+			});
+		}
+		setFiles((current) => current.filter((other) => other.key !== entry.key));
+	};
+
+	const done = files.filter((entry) => entry.state === "done");
+	const pending = files.filter(
+		(entry) => entry.state === "queued" || entry.state === "sending",
+	);
+	const status =
+		files.length === 0
+			? undefined
+			: pending.length > 0
+				? `${done.length} of ${done.length + pending.length} uploaded…`
+				: `${done.length} file${done.length === 1 ? "" : "s"} ready to send`;
+	const limits = [
+		props.accept.length > 0 ? props.accept.join(", ") : "Any file",
+		props.maxFiles !== undefined
+			? `up to ${props.maxFiles} file${props.maxFiles === 1 ? "" : "s"}`
+			: undefined,
+		props.maxBytes !== undefined
+			? `${formatSize(props.maxBytes)} each`
+			: undefined,
+	]
+		.filter(Boolean)
+		.join(" · ");
+
+	return (
+		<>
+			<Header title={props.prompt ?? "Send files"} status={status}>
+				<button
+					type="button"
+					className={primary}
+					disabled={done.length === 0 || pending.length > 0}
+					onClick={() =>
+						window.infer.submit({
+							files: done.map((entry) => entry.id),
+							...(note.trim() ? { note } : {}),
+						})
+					}
+				>
+					Send
+				</button>
+			</Header>
+			<label
+				htmlFor="infer-files"
+				className={`flex min-h-48 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition-colors ${
+					dragging
+						? "border-zinc-900 bg-zinc-100 dark:border-zinc-100 dark:bg-zinc-900"
+						: "border-zinc-300 dark:border-zinc-700"
+				}`}
+			>
+				<span className="text-3xl" aria-hidden>
+					⬆
+				</span>
+				<span className="font-medium">
+					<span className="hidden sm:inline">Drop files here, or </span>
+					<span className="underline">choose files</span>
+				</span>
+				<span className="text-sm text-zinc-500">{limits}</span>
+				<input
+					id="infer-files"
+					type="file"
+					multiple={props.maxFiles !== 1}
+					accept={props.accept.join(",") || undefined}
+					className="sr-only"
+					onChange={(event) => {
+						add(Array.from(event.target.files ?? []));
+						// Cleared, so choosing the same file again still counts.
+						event.target.value = "";
+					}}
+				/>
+			</label>
+			{files.length > 0 ? (
+				<ul className="mt-4 space-y-2">
+					{files.map((entry) => {
+						const percent =
+							entry.file.size === 0
+								? entry.state === "done"
+									? 100
+									: 0
+								: Math.round((entry.loaded / entry.file.size) * 100);
+						return (
+							<li
+								key={entry.key}
+								data-state={entry.state}
+								className={`rounded-lg border p-3 ${
+									entry.state === "failed"
+										? "border-rose-300 dark:border-rose-800"
+										: "border-zinc-200 dark:border-zinc-800"
+								}`}
+							>
+								<div className="flex items-center gap-3">
+									<div className="min-w-0 flex-1">
+										<div className="truncate font-medium">
+											{entry.file.name}
+										</div>
+										<div className="text-sm text-zinc-500">
+											{formatSize(entry.file.size)}
+											{entry.state === "sending" ? ` · ${percent}%` : ""}
+											{entry.state === "queued" ? " · waiting" : ""}
+											{entry.state === "done" ? " · uploaded" : ""}
+										</div>
+										{entry.error ? (
+											<div className="text-sm text-rose-600 dark:text-rose-400">
+												{entry.error}
+											</div>
+										) : null}
+									</div>
+									<button
+										type="button"
+										aria-label={`Remove ${entry.file.name}`}
+										onClick={() => remove(entry)}
+										className={icon}
+									>
+										✕
+									</button>
+								</div>
+								{entry.state === "sending" || entry.state === "queued" ? (
+									<div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+										<div
+											className="h-full bg-zinc-900 transition-[width] dark:bg-zinc-100"
+											style={{ width: `${percent}%` }}
+										/>
+									</div>
+								) : null}
+							</li>
+						);
+					})}
+				</ul>
+			) : null}
+			{props.note ? (
+				<div className="mt-4">
+					<label
+						htmlFor="infer-note"
+						className="mb-1 block text-sm font-medium"
+					>
+						Note <span className="font-normal text-zinc-500">(optional)</span>
+					</label>
+					<textarea
+						id="infer-note"
+						value={note}
+						onChange={(event) => setNote(event.target.value)}
+						placeholder="Anything to say about these files"
+						className="h-24 w-full rounded-md border border-zinc-300 bg-transparent px-3 py-2 dark:border-zinc-700"
+					/>
+				</div>
+			) : null}
+		</>
+	);
+}
+
 // --- mount -------------------------------------------------------------------
 
 function Page() {
@@ -563,6 +922,16 @@ function Page() {
 			return <Edit prompt={data.prompt} text={data.text} />;
 		case "form":
 			return <Form prompt={data.prompt} fields={data.fields} />;
+		case "upload":
+			return (
+				<Upload
+					prompt={data.prompt}
+					accept={data.accept}
+					maxFiles={data.maxFiles}
+					maxBytes={data.maxBytes}
+					note={data.note}
+				/>
+			);
 	}
 }
 

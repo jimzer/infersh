@@ -1,7 +1,7 @@
 # infer human
 
 Ask the person at the keyboard, through a real web page, and get their answer
-back. Needs no API key.
+back — or files from them. Needs no API key.
 
 ## Reach for a built-in page first
 
@@ -31,7 +31,36 @@ infer human form    --fields form.json                                        # 
 - The output is the same as `ask`: `{status, payload, elapsedMs, url}`. Only
   `submitted` carries an answer.
 
-Write a page of your own only when none of the five fits:
+## Getting files from the human
+
+`upload` is the other direction: the human sends **you** files — a photo from
+their phone, a signed PDF, a screen recording.
+
+```bash
+infer human upload --prompt 'Photos of the damage' --accept 'image/*' --share
+infer human upload --out assets/raw --accept 'video/*,.mov' --max-files 1 --max-size 2GB
+```
+
+- They drop files on the page, or tap to pick them (or take a photo, on a
+  phone), may add a note, and press Send. Each file streams to disk as it is
+  added, so a multi-GB video is fine.
+- Files land in `--out` (default `uploads/<date-time>`, created). Nothing is
+  overwritten: a second `report.pdf` becomes `report (2).pdf`.
+- **stdout is the saved absolute paths, one per line** — read them directly.
+  The note goes to stderr (`Note: …`) so the paths stay parseable; pass
+  `--json` when you need the note or the status:
+  `{status, payload: {files: [{path, name, size, type}], note?}, elapsedMs, url}`,
+  where `name` is the file's name on their device and `size` is in bytes.
+- **Empty stdout means nothing was sent**: they cancelled, or the timeout hit
+  (stderr says which). Nothing is left in the folder then — files they had
+  added are deleted, as are files they removed before Send.
+- `--accept` takes what an HTML `accept` attribute does (`image/*,.pdf`); the
+  picker shows only those, and the server refuses anything else. `--max-size`
+  (`25MB`, `1.5GB`) and `--max-files` are enforced by the server too, and the
+  page says why a file was refused. `--no-note` hides the note field.
+- Use `--share` when the files are on their phone.
+
+Write a page of your own only when none of these fits:
 
 ```bash
 infer human ask ./pick.tsx --data posts.json      # they answer; you get their JSON
@@ -175,7 +204,8 @@ ends. Needs Tailscale on this machine and on the device opening the link.
 
 - **This command blocks.** That is the point: the server only lives as long as
   the command. Give a real `--timeout` (seconds) for how long the user might
-  plausibly take — `ask` defaults to 5 minutes, `present` to 15 — and run it in
+  plausibly take — `ask` defaults to 5 minutes, `present` and the built-in
+  pages to 15 — and run it in
   the background if it may run longer than your own tool timeout.
 - **Never poll or re-run to "check" an answer.** Re-running serves a new page
   at a new URL and abandons the one they are looking at.

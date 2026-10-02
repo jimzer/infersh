@@ -2,8 +2,8 @@
  * `infer human` — ask the human: show them a page and wait for what they do.
  */
 
-import { resolve } from "node:path";
-import { Console, Effect, Option, Schema } from "effect";
+import { dirname, resolve } from "node:path";
+import { Console, Effect, FileSystem, Option, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 // The built-in page, embedded as text and served as an inline source: Bun
 // inlines the characters without following its imports, so React stays out
@@ -12,15 +12,20 @@ import { Argument, Command, Flag } from "effect/cli";
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import pageSource from "../human/page.tsx" with { type: "text" };
 import {
+	defaultUploadDir,
 	FIELD_TYPES,
 	type Item,
 	type PresetData,
+	parseAccept,
 	parseFormFields,
+	parseSize,
 	toItems,
+	UploadAnswer,
 } from "../human/presets.ts";
 import { JsonText } from "../json.ts";
 import { emitJson, jsonFlag } from "../output.ts";
 import { Ui, UiError, type UiRequest, type UiResult } from "../ui.ts";
+import type { UploadRules } from "../ui-upload.ts";
 
 const PAGE_SOURCE: string = pageSource;
 
@@ -297,6 +302,17 @@ const loadItems = (
 /** Serves the built-in page with `data`, and prints the answer like `ask`. */
 const runPreset = (data: PresetData, flags: ServingFlags) =>
 	Effect.gen(function* () {
+		const result = yield* servePreset(data, flags);
+		yield* emitJson(result);
+	});
+
+/** Serves the built-in page with `data`, and says how it ended. */
+const servePreset = (
+	data: PresetData,
+	flags: ServingFlags,
+	upload?: UploadRules,
+) =>
+	Effect.gen(function* () {
 		const ui = yield* Ui;
 		const result = yield* ui.run({
 			app: { inline: PAGE_SOURCE },
@@ -311,9 +327,10 @@ const runPreset = (data: PresetData, flags: ServingFlags) =>
 			share: flags.share,
 			tailwind: true,
 			open: flags.open,
+			upload,
 		});
 		yield* Console.error(`  ${NOTE[result.status]}`);
-		yield* emitJson(result);
+		return result;
 	});
 
 const ANSWER_NOTE =
@@ -511,6 +528,188 @@ ${ANSWER_NOTE}`,
 	]),
 );
 
+/**
+ * The folder the files land in, created for the run. Whatever this run
+ * created is removed again if it ends empty — cancelled, timed out or
+ * interrupted — so a question nobody answered leaves no folder behind.
+ */
+const uploadFolder = (path: string) =>
+	Effect.acquireRelease(
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			const dir = resolve(path);
+			// The highest missing folder: everything from there down is ours.
+			let created: string | undefined;
+			for (let at = dir; !(yield* fs.exists(at)); at = dirname(at)) {
+				created = at;
+			}
+			yield* fs.makeDirectory(dir, { recursive: true });
+			return { dir, created };
+		}),
+		({ dir, created }) =>
+			Effect.gen(function* () {
+				if (created === undefined) return;
+				const fs = yield* FileSystem.FileSystem;
+				for (let at = dir; ; at = dirname(at)) {
+					if ((yield* fs.readDirectory(at)).length > 0) return;
+					// Empty, as just checked; `recursive` is only what removing a
+					// folder takes at all.
+					yield* fs.remove(at, { recursive: true });
+					if (at === created) return;
+				}
+			}).pipe(Effect.ignore),
+	).pipe(
+		Effect.map(({ dir }) => dir),
+		Effect.mapError(
+			(error) =>
+				new UiError({
+					reason: `Could not create the folder ${path}: ${error.message}`,
+				}),
+		),
+	);
+
+const uploadCmd = Command.make(
+	"upload",
+	{
+		out: Flag.String("out").pipe(
+			Flag.withAlias("o"),
+			Flag.withMetavar("dir"),
+			Flag.optional,
+			Flag.withDescription(
+				"Folder the files are saved in, created if missing. Defaults to uploads/<date-time>. Existing files are never overwritten: a second report.pdf is saved as report (2).pdf.",
+			),
+		),
+		accept: Flag.String("accept").pipe(
+			Flag.withMetavar("types"),
+			Flag.optional,
+			Flag.withDescription(
+				"Which files to take, as in an HTML accept attribute: extensions and MIME types, comma-separated, e.g. 'image/*,.pdf'. The picker shows only these, and the server refuses anything else by name and type. Defaults to any file.",
+			),
+		),
+		maxFiles: Flag.Int("max-files").pipe(
+			Flag.withMetavar("n"),
+			Flag.optional,
+			Flag.withDescription("At most this many files. Defaults to no limit."),
+		),
+		maxSize: Flag.String("max-size").pipe(
+			Flag.withMetavar("size"),
+			Flag.optional,
+			Flag.withDescription(
+				"Largest file accepted, e.g. 25MB, 1.5GB or a byte count (powers of 1024). Enforced by the server as the file streams in. Defaults to no limit.",
+			),
+		),
+		noNote: Flag.Boolean("no-note").pipe(
+			Flag.withDefault(false),
+			Flag.withDescription(
+				"Hide the note field. By default the human can add a note beside the files.",
+			),
+		),
+		prompt: Flag.String("prompt").pipe(
+			Flag.withMetavar("text"),
+			Flag.optional,
+			Flag.withDescription(
+				"What to send, shown at the top of the page: 'The signed contract, as a PDF'.",
+			),
+		),
+		...servingFlags,
+	},
+	(flags) =>
+		Effect.gen(function* () {
+			const accept = Option.match(flags.accept, {
+				onNone: () => [],
+				onSome: parseAccept,
+			});
+			const maxFiles = Option.getOrUndefined(flags.maxFiles);
+			if (maxFiles !== undefined && maxFiles < 1) {
+				return yield* Effect.fail(
+					new UiError({ reason: "--max-files must be at least 1." }),
+				);
+			}
+			const maxBytes = Option.isNone(flags.maxSize)
+				? undefined
+				: parseSize(flags.maxSize.value);
+			if (Option.isSome(flags.maxSize) && maxBytes === undefined) {
+				return yield* Effect.fail(
+					new UiError({
+						reason: `--max-size ${flags.maxSize.value} is not a size; try 25MB, 1.5GB or a byte count.`,
+					}),
+				);
+			}
+			const dir = yield* uploadFolder(
+				Option.getOrElse(flags.out, () => defaultUploadDir(new Date())),
+			);
+			const prompt = Option.getOrUndefined(flags.prompt);
+			const result = yield* servePreset(
+				{
+					kind: "upload",
+					prompt,
+					accept,
+					maxFiles,
+					maxBytes,
+					note: !flags.noNote,
+				},
+				flags,
+				{ dir, accept, maxFiles, maxBytes },
+			);
+			if (flags.json) return yield* emitJson(result);
+			if (result.status !== "submitted") return;
+			const answer = yield* Schema.decodeUnknownEffect(UploadAnswer)(
+				result.payload,
+			).pipe(
+				Effect.mapError(
+					() =>
+						new UiError({
+							reason: "The page server answered without a list of files.",
+						}),
+				),
+			);
+			const count = answer.files.length;
+			yield* Console.error(
+				`  ${count} file${count === 1 ? "" : "s"} saved in ${dir}`,
+			);
+			// stderr, so stdout stays one path per line for whatever reads it.
+			if (answer.note) {
+				yield* Console.error(
+					`  Note: ${answer.note.replace(/\n/g, "\n        ")}`,
+				);
+			}
+			if (count > 0) {
+				yield* Console.log(answer.files.map((file) => file.path).join("\n"));
+			}
+		}).pipe(Effect.scoped),
+).pipe(
+	Command.withShortDescription("Let the human send you files."),
+	Command.withDescription(
+		`Ask the human for files. They drop them on the page (or tap to pick them,
+or take a photo, on a phone), may add a note, and press Send. Each file
+streams to disk as it is added, so size is no object, and lands in the --out
+folder; a file they removed, or anything left when they cancel, the timeout
+expires or the command is interrupted, is deleted.
+
+stdout: the saved files' absolute paths, one per line, in the order they were
+added. The note, if any, goes to stderr so the paths stay parseable — use
+--json to read it. Nothing on stdout means nothing was sent: stderr says
+whether they cancelled or never answered.
+
+--json prints the same JSON as ask, with payload
+{"files": [{"path", "name", "size", "type"}, ...], "note"?: "..."} — name as
+it was on their device, size in bytes. Only a status of submitted carries
+files; cancelled means they declined, timeout that they never answered.`,
+	),
+	Command.withExamples([
+		{
+			command:
+				"infer human upload --prompt 'The receipts for March' --accept 'image/*,.pdf' --share",
+			description: "Collect photos or PDFs from a phone",
+		},
+		{
+			command:
+				"infer human upload --out assets/raw --accept 'video/*' --max-files 1 --max-size 2GB --json",
+			description: "One video into a chosen folder, as JSON",
+		},
+	]),
+);
+
 export const humanCmd = Command.make("human").pipe(
 	Command.withShortDescription(
 		"Ask the human: show them a page and get their answer back.",
@@ -523,8 +722,8 @@ person at the keyboard. The page is a .tsx file opened in their browser,
 and the command blocks until they act on it, so the answer is theirs.
 
 For the common shapes no page is needed: pick, approve, rank, edit and
-form take only data. For anything else, ask and present serve a .tsx
-page you write. The page opens on this computer by default; add --share
+form take only data, and upload has the human send you files. For anything
+else, ask and present serve a .tsx page you write. The page opens on this computer by default; add --share
 to open it on another device, such as a phone.`,
 	),
 	Command.withSubcommands([
@@ -533,6 +732,7 @@ to open it on another device, such as a phone.`,
 		rankCmd,
 		editCmd,
 		formCmd,
+		uploadCmd,
 		askCmd,
 		presentCmd,
 	]),
