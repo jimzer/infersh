@@ -90,6 +90,8 @@ export interface RunOptions {
 	readonly stdout?: Output;
 	readonly stderr?: Output;
 	readonly env?: Record<string, string | undefined>;
+	/** `ignore` gives the child an empty stdin, so one that reads it cannot hang. */
+	readonly stdin?: "ignore" | "inherit" | "pipe";
 }
 
 export interface RunResult {
@@ -123,6 +125,7 @@ export const run = (
 			const handle = yield* ChildProcess.make(command, [...args], {
 				...(options.cwd ? { cwd: options.cwd } : {}),
 				...(options.env ? { env: options.env } : {}),
+				...(options.stdin ? { stdin: options.stdin } : {}),
 				stdout,
 				stderr,
 			});

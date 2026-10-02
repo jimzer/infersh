@@ -119,6 +119,14 @@ infer groq transcribe --url https://example.com/long.mp3  # files over 25 MB
 
 Audio is converted to 16 kHz mono FLAC with ffmpeg before upload — the same downsampling Groq applies server-side, so there is no accuracy cost. It roughly halves the file and accepts anything ffmpeg can read, not just Groq's own format list. Pass `--no-optimize` to send the file untouched.
 
+### Each
+
+```bash
+infer each urls.jsonl -c 8 -- infer bdata scrape {url} --data-format markdown --json > pages.jsonl
+```
+
+Runs a command once per JSONL row, filling `{field}` from the row without a shell, and prints one line per row: the row and its result or error. Successes are kept, so re-running the same line runs only the rows that are missing or failed; `--fresh` runs everything again.
+
 ### Skills
 
 ```bash

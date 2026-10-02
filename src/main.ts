@@ -8,6 +8,7 @@ import * as Bdata from "./bdata.ts";
 import * as Budget from "./budget.ts";
 import { bdataCmd } from "./commands/bdata.ts";
 import { budgetCmd } from "./commands/budget.ts";
+import { eachCmd } from "./commands/each.ts";
 import { falCmd } from "./commands/fal.ts";
 import { groqCmd } from "./commands/groq.ts";
 import { humanCmd } from "./commands/human.ts";
@@ -54,6 +55,7 @@ const inferCmd = Command.make("infer").pipe(
 	Command.withSubcommands([
 		bdataCmd,
 		budgetCmd,
+		eachCmd,
 		falCmd,
 		groqCmd,
 		humanCmd,
