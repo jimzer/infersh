@@ -1,14 +1,12 @@
 /**
- * `infer meeting` — record a meeting and transcribe it; notes on request.
+ * `infer meeting` — record a meeting and transcribe it.
  */
 
 import { join, resolve } from "node:path";
 import { Console, Effect, Option } from "effect";
 import { Command, Flag } from "effect/cli";
-import { notes, record, transcribe } from "../meeting.ts";
+import { record, transcribe } from "../meeting.ts";
 import { emitJson, jsonFlag } from "../output.ts";
-
-const DEFAULT_MODEL = "anthropic/claude-sonnet-5";
 
 /** meetings/2026-10-02-1430, in local time. */
 const defaultDir = (now: Date): string => {
@@ -27,14 +25,14 @@ export const meetingCmd = Command.make(
 			Flag.withMetavar("dir"),
 			Flag.optional,
 			Flag.withDescription(
-				"Folder for the recording, transcript and notes. Defaults to meetings/<date-time>.",
+				"Folder for the recording and transcript. Defaults to meetings/<date-time>.",
 			),
 		),
 		from: Flag.String("from").pipe(
 			Flag.withMetavar("dir"),
 			Flag.optional,
 			Flag.withDescription(
-				"Skip recording: transcribe a folder recorded earlier, e.g. after an interrupted run, or add --notes to one already transcribed.",
+				"Skip recording: transcribe a folder recorded earlier, e.g. after an interrupted run.",
 			),
 		),
 		duration: Flag.Finite("duration").pipe(
@@ -61,19 +59,6 @@ export const meetingCmd = Command.make(
 			Flag.withDefault("Them"),
 			Flag.withDescription(
 				"Label for the system audio track: everyone else on the call.",
-			),
-		),
-		model: Flag.String("model").pipe(
-			Flag.withMetavar("slug"),
-			Flag.withDefault(DEFAULT_MODEL),
-			Flag.withDescription(
-				`OpenRouter model that writes the notes. Defaults to ${DEFAULT_MODEL}.`,
-			),
-		),
-		notes: Flag.Boolean("notes").pipe(
-			Flag.withDefault(false),
-			Flag.withDescription(
-				"Also have an OpenRouter model write notes.md: summary, decisions, action items and a cleaned-up transcript.",
 			),
 		),
 		json: jsonFlag,
@@ -103,7 +88,7 @@ export const meetingCmd = Command.make(
 					),
 				);
 			}
-			const { turns, markdown } = yield* transcribe({
+			const { turns } = yield* transcribe({
 				dir,
 				language: Option.getOrUndefined(config.language),
 				me: config.me,
@@ -115,19 +100,15 @@ export const meetingCmd = Command.make(
 					),
 				),
 			);
-			const notesPath = config.notes
-				? yield* notes(dir, markdown, config.model)
-				: undefined;
 			const transcriptPath = join(dir, "transcript.md");
 			if (config.json) {
 				return yield* emitJson({
 					dir,
 					transcript: transcriptPath,
-					...(notesPath ? { notes: notesPath } : {}),
 					turns: turns.length,
 				});
 			}
-			yield* Console.log(notesPath ?? transcriptPath);
+			yield* Console.log(transcriptPath);
 		}),
 ).pipe(
 	Command.withShortDescription(
@@ -137,9 +118,9 @@ export const meetingCmd = Command.make(
 		`Record your microphone and the computer's audio as two separate
 tracks, then transcribe each with Groq Whisper and merge them into one
 transcript where the mic is "Me" and system audio is "Them" — speaker
-labels without diarization. --notes also has an OpenRouter model write
-notes.md: summary, decisions, action items, open questions and a
-cleaned-up transcript, in the meeting's language.
+labels without diarization. The transcript is left as recognised:
+cleaning it up, summarising it or pulling out action items is for
+whoever reads it next.
 
 macOS 15+ only. The first run compiles a small Swift helper (needs the
 Xcode Command Line Tools) and macOS asks to allow your terminal under
@@ -157,10 +138,9 @@ Writes into the folder:
   mic.transcript.json, system.transcript.json
                                         Groq's raw response per track
   transcript.md, transcript.json        both tracks merged by time
-  notes.md                              with --notes
-stdout is the path of transcript.md, or of notes.md with --notes.
+stdout is the path of transcript.md.
 
-Requires a Groq API key, and an OpenRouter key for --notes.`,
+Requires a Groq API key.`,
 	),
 	Command.withExamples([
 		{
@@ -172,8 +152,8 @@ Requires a Groq API key, and an OpenRouter key for --notes.`,
 			description: "Name the two sides",
 		},
 		{
-			command: "infer meeting --from meetings/2026-10-02-1430 --notes",
-			description: "Add notes to a meeting recorded earlier",
+			command: "infer meeting --from meetings/2026-10-02-1430",
+			description: "Transcribe a recording made earlier",
 		},
 	]),
 );

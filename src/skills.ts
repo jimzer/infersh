@@ -21,6 +21,8 @@ import humanMd from "./skills/references/human.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import mediaMd from "./skills/references/media.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
+import meetingMd from "./skills/references/meeting.md" with { type: "text" };
+// @ts-expect-error text import: Bun inlines the file contents as a string
 import openrouterMd from "./skills/references/openrouter.md" with {
 	type: "text",
 };
@@ -57,6 +59,7 @@ export const SKILL_FILES: ReadonlyArray<{
 	{ path: "references/human.md", contents: humanMd as string },
 	{ path: "references/each.md", contents: eachMd as string },
 	{ path: "references/media.md", contents: mediaMd as string },
+	{ path: "references/meeting.md", contents: meetingMd as string },
 ];
 
 /**

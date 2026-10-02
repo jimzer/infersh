@@ -1,7 +1,8 @@
 /**
  * `infer meeting` — record the microphone and system audio as two tracks,
- * transcribe each, merge them into one transcript labelled by speaker, and
- * write clean notes.
+ * transcribe each, and merge them into one transcript labelled by speaker.
+ * Cleaning it up or summarising it is left to whoever reads it — usually the
+ * agent that ran the command.
  *
  * Capture is a small Swift helper on ScreenCaptureKit (macOS 15+), compiled
  * on first use and cached by the hash of its source. ffmpeg cannot hear system
@@ -18,13 +19,14 @@ import {
 	FileSystem,
 	Option,
 	Ref,
+	Schedule,
 	Schema,
 	Stream,
 } from "effect";
 import { ChildProcess } from "effect/process";
 import { Groq } from "./groq.ts";
+// @ts-expect-error text import: Bun inlines the file contents as a string
 import captureSource from "./meeting/capture.swift" with { type: "text" };
-import { OpenRouter } from "./openrouter.ts";
 import { cacheDir, run } from "./stage.ts";
 
 export class MeetingError extends Data.TaggedError("MeetingError")<{
@@ -42,7 +44,10 @@ const fail = (reason: string) => Effect.fail(new MeetingError({ reason }));
 /** The helper's stdout protocol, one JSON object per line. */
 const CaptureMessage = Schema.Union([
 	Schema.Struct({ type: Schema.Literal("started") }),
-	Schema.Struct({ type: Schema.Literal("stopped") }),
+	Schema.Struct({
+		type: Schema.Literal("stopped"),
+		reason: Schema.optionalKey(Schema.String),
+	}),
 	Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
 	Schema.Struct({ type: Schema.Literal("warning"), message: Schema.String }),
 	Schema.Struct({
@@ -204,12 +209,19 @@ export const record = Effect.fn("Meeting.record")(function* (
 	}).pipe(Effect.mapError((e) => new MeetingError({ reason: e.message })));
 
 	const started = yield* Deferred.make<void, MeetingError>();
-	const stopped = yield* Deferred.make<void, MeetingError>();
+	/** Completes with macOS's reason when the stream ended on its own. */
+	const stopped = yield* Deferred.make<Option.Option<string>, MeetingError>();
 	// The meter redraws one line in place, so only on a terminal; it is off
 	// until recording starts and after it stops.
 	const live = process.stderr.isTTY === true;
 	const meter = yield* Ref.make(
-		Option.none<{ began: number; micLoud: number; systemLoud: number }>(),
+		Option.none<{
+			began: number;
+			micLoud: number;
+			systemLoud: number;
+			/** When the helper last reported levels: proof it is alive. */
+			heard: number;
+		}>(),
 	);
 	const drawLevels = (mic: number, system: number) =>
 		Ref.get(meter).pipe(
@@ -221,6 +233,7 @@ export const record = Effect.fn("Meeting.record")(function* (
 							const now = Date.now();
 							const next = {
 								...state,
+								heard: now,
 								micLoud: mic > SILENCE_DB ? now : state.micLoud,
 								systemLoud: system > SILENCE_DB ? now : state.systemLoud,
 							};
@@ -259,7 +272,10 @@ export const record = Effect.fn("Meeting.record")(function* (
 						case "started":
 							return Deferred.succeed(started, undefined);
 						case "stopped":
-							return Deferred.succeed(stopped, undefined);
+							return Deferred.succeed(
+								stopped,
+								Option.fromUndefinedOr(message.reason),
+							);
 						case "warning":
 							return Console.error(`warning: ${message.message}`);
 						case "level":
@@ -306,26 +322,82 @@ export const record = Effect.fn("Meeting.record")(function* (
 	);
 	yield* Ref.set(
 		meter,
-		Option.some({ began, micLoud: began, systemLoud: began }),
+		Option.some({ began, micLoud: began, systemLoud: began, heard: began }),
 	);
-	yield* options.durationMs === undefined
-		? enterOrCtrlC
-		: Effect.raceFirst(enterOrCtrlC, Effect.sleep(options.durationMs));
+	// Levels arrive five times a second; a gap means the helper stalled, which
+	// the meter would otherwise hide by simply freezing.
+	if (live) {
+		yield* Ref.get(meter).pipe(
+			Effect.flatMap(
+				Option.match({
+					onNone: () => Effect.void,
+					onSome: (state) => {
+						const quiet = Date.now() - state.heard;
+						return quiet < 3000
+							? Effect.void
+							: Effect.sync(() =>
+									process.stderr.write(
+										`\r\x1b[2K\x1b[33m⚠ No audio from the recorder for ${Math.round(quiet / 1000)} s\x1b[0m`,
+									),
+								);
+					},
+				}),
+			),
+			Effect.repeat(Schedule.spaced("1 second")),
+			Effect.forkScoped,
+		);
+	}
+
+	const asked =
+		options.durationMs === undefined
+			? enterOrCtrlC
+			: Effect.raceFirst(enterOrCtrlC, Effect.sleep(options.durationMs));
+	// Whichever comes first: the user, or the recording ending without them —
+	// macOS stopping the stream, or the helper dying. Either way, what was
+	// recorded is on disk and still gets transcribed.
+	const ended = yield* Effect.raceFirst(
+		asked.pipe(Effect.as(Option.none<string>())),
+		Effect.raceFirst(
+			Deferred.await(stopped).pipe(
+				Effect.map((reason) =>
+					Option.some(
+						Option.getOrElse(reason, () => "The recording ended by itself."),
+					),
+				),
+			),
+			capture.exitCode.pipe(
+				Effect.map((code) =>
+					Option.some(`The capture helper exited unexpectedly (code ${code}).`),
+				),
+				Effect.orElseSucceed(() =>
+					Option.some("The capture helper exited unexpectedly."),
+				),
+			),
+		),
+	);
 
 	yield* Ref.set(meter, Option.none());
 	if (live) yield* Effect.sync(() => process.stderr.write("\r\x1b[2K"));
-	yield* Stream.make(new TextEncoder().encode("stop\n")).pipe(
-		Stream.run(capture.stdin),
-		Effect.ignore,
-	);
-	yield* Deferred.await(stopped).pipe(
-		Effect.timeoutOrElse({
-			duration: "10 seconds",
-			orElse: () => fail("The capture helper did not stop cleanly."),
-		}),
-	);
-	const minutes = (Date.now() - began) / 60_000;
-	yield* Console.error(`■ Stopped after ${minutes.toFixed(1)} min.`);
+	if (Option.isNone(ended)) {
+		yield* Stream.make(new TextEncoder().encode("stop\n")).pipe(
+			Stream.run(capture.stdin),
+			Effect.ignore,
+		);
+		yield* Deferred.await(stopped).pipe(
+			Effect.timeoutOrElse({
+				duration: "10 seconds",
+				orElse: () => fail("The capture helper did not stop cleanly."),
+			}),
+		);
+	}
+	const minutes = ((Date.now() - began) / 60_000).toFixed(1);
+	yield* Option.match(ended, {
+		onNone: () => Console.error(`■ Stopped after ${minutes} min.`),
+		onSome: (reason) =>
+			Console.error(
+				`■ ${reason} Recorded ${minutes} min; transcribing what was captured.`,
+			),
+	});
 });
 
 // --- Transcript ------------------------------------------------------------
@@ -552,51 +624,4 @@ export const transcribe = Effect.fn("Meeting.transcribe")(function* (
 		)
 		.pipe(Effect.mapError((e) => new MeetingError({ reason: e.message })));
 	return { turns, markdown };
-});
-
-// --- Notes -----------------------------------------------------------------
-
-const NOTES_INSTRUCTIONS = `You turn a raw meeting transcript into clean notes in Markdown.
-
-The transcript comes from speech recognition on two tracks: one speaker is the
-person who recorded it, the other label covers everyone else on the call.
-Recognition errors are likely; fix obvious ones from context, never invent
-content, and keep names, numbers and technical terms exactly as said.
-
-Write, in this order:
-# <a short title for the meeting>
-## Summary — 3 to 6 bullets.
-## Decisions — bullets; omit the section if none.
-## Action items — "- [ ] who: what (when, if said)"; omit if none.
-## Open questions — omit if none.
-## Clean transcript — the whole conversation, same speaker labels and
-timestamps, with filler words, false starts and repetitions removed and
-punctuation fixed. Keep every point that was made.
-
-Write everything in the language the meeting was held in: translate the section
-headings above too (in French: Résumé, Décisions, Actions, Questions ouvertes,
-Transcription).
-Answer with the Markdown only.`;
-
-export const notes = Effect.fn("Meeting.notes")(function* (
-	dir: string,
-	transcript: string,
-	model: string,
-) {
-	const openrouter = yield* OpenRouter;
-	const fs = yield* FileSystem.FileSystem;
-	yield* Console.error(`Writing notes with ${model}...`);
-	const result = yield* openrouter
-		.respond({
-			model,
-			instructions: NOTES_INSTRUCTIONS,
-			prompt: transcript,
-			maxTokens: 32_000,
-		})
-		.pipe(Effect.mapError((e) => new MeetingError({ reason: e.message })));
-	const path = join(dir, "notes.md");
-	yield* fs
-		.writeFileString(path, `${result.text.trim()}\n`)
-		.pipe(Effect.mapError((e) => new MeetingError({ reason: e.message })));
-	return path;
 });
