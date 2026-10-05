@@ -7,13 +7,16 @@
  * timed out or been cancelled. Page errors go to stderr, which the CLI shows.
  *
  * With `upload` in the job it also receives files, streamed to disk by
- * `ui-upload.ts`, and answers with where they were saved (ADR 33).
+ * `ui-upload.ts`, and answers with where they were saved (ADR 33). With
+ * `download` it serves the files named in the job, streamed from disk by
+ * `ui-download.ts`, and answers with which were downloaded (ADR 34).
  *
  * This file is never imported by the CLI. It is embedded as text and written
- * into the run's temp directory beside the built page and `ui-upload.ts`. See
- * `docs/adrs/0016`.
+ * into the run's temp directory beside the built page and its neighbours.
+ * See `docs/adrs/0016`.
  */
 
+import { createDownloads, type DownloadRules } from "./ui-download.ts";
 import { createUploads, type UploadRules } from "./ui-upload.ts";
 
 interface Job {
@@ -22,6 +25,7 @@ interface Job {
 	readonly timeoutMs: number;
 	readonly pagePath: string;
 	readonly upload?: UploadRules;
+	readonly download?: DownloadRules;
 }
 
 const job: Job = JSON.parse(process.argv[2] ?? "{}");
@@ -38,13 +42,19 @@ const page = await Bun.file(job.pagePath).bytes();
 const gzipped = Bun.gzipSync(page);
 
 const uploads = job.upload ? createUploads(job.upload) : undefined;
+const downloads = job.download ? createDownloads(job.download) : undefined;
+const started = Date.now();
 
 /**
+ * A download page answers with the files downloaded, however it ended.
+ *
  * An upload page answers with the ids of files it already sent; they become
  * the saved files, and every other upload is deleted. Any other ending deletes
  * them all, so nothing the human did not send is left in the folder.
  */
-const settleUploads = (status: string, payload: unknown): unknown => {
+const settleAnswer = (status: string, payload: unknown): unknown => {
+	// Whatever the ending, the files already downloaded are on their device.
+	if (downloads) return { downloaded: downloads.downloaded() };
 	if (!uploads) return payload;
 	if (status !== "submitted") {
 		uploads.discard();
@@ -60,10 +70,25 @@ const settleUploads = (status: string, payload: unknown): unknown => {
 
 let settled = false;
 
-const finish = (status: string, payload: unknown): void => {
+/**
+ * Done pressed while a download is still streaming must not cut it off: the
+ * server stays up until it ends, but no longer than the run's own timeout.
+ */
+const drain = async (): Promise<void> => {
+	const { active } = downloads?.progress() ?? { active: 0 };
+	if (active === 0 || !downloads) return;
+	console.error(
+		`  Waiting for ${active} download${active === 1 ? "" : "s"} to finish…`,
+	);
+	const left = job.timeoutMs - (Date.now() - started);
+	await Promise.race([downloads.idle(), Bun.sleep(Math.max(0, left))]);
+};
+
+const finish = async (status: string, payload: unknown): Promise<void> => {
 	if (settled) return;
 	settled = true;
-	send({ type: "answer", status, payload: settleUploads(status, payload) });
+	if (status !== "timeout") await drain();
+	send({ type: "answer", status, payload: settleAnswer(status, payload) });
 	// Let the browser's own request finish before the socket goes away,
 	// otherwise the page reports a network error on an answer that landed.
 	setTimeout(() => {
@@ -78,8 +103,13 @@ const abandon = (code: number): never => {
 	process.exit(code);
 };
 
+/**
+ * The token, from a header — or, for what the browser fetches by itself
+ * (an image, a video, a download), from the query string.
+ */
 const authorised = (request: Request): boolean =>
-	request.headers.get("x-infer-token") === job.token;
+	(request.headers.get("x-infer-token") ??
+		new URL(request.url).searchParams.get("token")) === job.token;
 
 const forbidden = (): Response => new Response("forbidden", { status: 403 });
 
@@ -113,7 +143,7 @@ const server = Bun.serve({
 					status?: string;
 					payload?: unknown;
 				} | null;
-				finish(body?.status ?? "submitted", body?.payload ?? null);
+				void finish(body?.status ?? "submitted", body?.payload ?? null);
 				return Response.json({ ok: true });
 			},
 		},
@@ -134,6 +164,22 @@ const server = Bun.serve({
 					: Response.json({
 							removed: uploads.remove(request.params.id ?? ""),
 						}),
+		},
+
+		// Files are addressed by their position in the job, never by a path.
+		"/api/file/:index": (request: Bun.BunRequest) =>
+			!authorised(request) || !downloads
+				? forbidden()
+				: downloads.file(request, request.params.index ?? ""),
+
+		"/api/zip": (request: Request) =>
+			!authorised(request) || !downloads ? forbidden() : downloads.zip(request),
+
+		"/api/downloads": {
+			GET: (request: Request) =>
+				!authorised(request) || !downloads
+					? forbidden()
+					: Response.json(downloads.progress()),
 		},
 
 		// Generated page code will sometimes be broken. Surfacing the error on
@@ -170,4 +216,4 @@ void (async () => {
 	abandon(0);
 })();
 
-setTimeout(() => finish("timeout", null), job.timeoutMs);
+setTimeout(() => void finish("timeout", null), job.timeoutMs);

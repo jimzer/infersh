@@ -1,7 +1,7 @@
 # infer human
 
 Ask the person at the keyboard, through a real web page, and get their answer
-back — or files from them. Needs no API key.
+back — or files from them, or hand files to them. Needs no API key.
 
 ## Reach for a built-in page first
 
@@ -59,6 +59,36 @@ infer human upload --out assets/raw --accept 'video/*,.mov' --max-files 1 --max-
   (`25MB`, `1.5GB`) and `--max-files` are enforced by the server too, and the
   page says why a file was refused. `--no-note` hides the note field.
 - Use `--share` when the files are on their phone.
+
+## Handing files to the human
+
+`download` is the reverse: you give **them** files — a render, a report, a
+video to keep on their phone.
+
+```bash
+infer human download out/final.mp4 out/thumb.png --prompt 'The final cut' --share
+infer human download report.pdf data.csv --json
+```
+
+- Pass the files as arguments. Only those are reachable from the page, by
+  their position in the list; folders are refused (pass `dir/*`), and a
+  missing file fails before anything is served.
+- The page shows each file with its size and a Download button, previews
+  images, plays video and audio (seeking works), opens PDFs in the browser,
+  and has **Download all (.zip)** when there are two or more. Files stream
+  from disk and resume, so multi-GB files are fine.
+- They press **Done** when they have what they need; Done waits for downloads
+  still running. There is no Cancel: nothing to decline.
+- **stdout is the absolute paths of the files they downloaded, one per line**,
+  in the order you gave them; stderr says `n of m files downloaded`. A file
+  counts once every byte of it was sent to a download — its button (resumes
+  included) or a whole zip. Watching the video or opening the PDF in the page
+  does not count.
+- The paths are printed however it ended, timeout included: what they
+  downloaded is theirs even if they never pressed Done. Empty stdout means
+  nothing was downloaded. `--json` gives
+  `{status, payload: {downloaded: [{path, name, size}]}, elapsedMs, url}`,
+  with `status` `done` or `timeout`.
 
 Write a page of your own only when none of these fits:
 

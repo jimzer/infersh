@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 /**
  * The built-in page behind `infer human pick | approve | rank | edit | form |
- * upload`.
+ * upload | download`.
  *
  * One page for every kind, switching on `infer.data.kind`. It goes through the
  * same pipeline as a page an agent writes — flattened, bundled with React and
@@ -58,7 +58,15 @@ type Data =
 			maxFiles?: number;
 			maxBytes?: number;
 			note: boolean;
-	  };
+	  }
+	| { kind: "download"; prompt?: string; files: ReadonlyArray<Offered> };
+
+/** A file on offer, fetched by its position in the list. */
+interface Offered {
+	readonly name: string;
+	readonly size: number;
+	readonly type: string;
+}
 
 declare global {
 	interface Window {
@@ -66,6 +74,7 @@ declare global {
 			readonly data: Data;
 			submit(payload: unknown): Promise<void>;
 			cancel(reason?: unknown): Promise<void>;
+			done(): Promise<void>;
 		};
 	}
 }
@@ -85,6 +94,8 @@ const icon =
 function Header(props: {
 	readonly title: string;
 	readonly status?: string;
+	/** A page with nothing to decline, such as download, leaves it out. */
+	readonly cancel?: boolean;
 	readonly children: ReactNode;
 }) {
 	return (
@@ -97,13 +108,15 @@ function Header(props: {
 					<p className="text-sm text-zinc-500">{props.status}</p>
 				) : null}
 			</div>
-			<button
-				type="button"
-				className={secondary}
-				onClick={() => window.infer.cancel("none of these")}
-			>
-				Cancel
-			</button>
+			{props.cancel === false ? null : (
+				<button
+					type="button"
+					className={secondary}
+					onClick={() => window.infer.cancel("none of these")}
+				>
+					Cancel
+				</button>
+			)}
 			{props.children}
 		</header>
 	);
@@ -906,6 +919,202 @@ function Upload(props: {
 	);
 }
 
+// --- download ----------------------------------------------------------------
+
+/** Where a file is fetched: by position, the token in the query string. */
+const fileUrl = (index: number, download: boolean): string =>
+	`/api/file/${index}?token=${TOKEN}${download ? "&download=1" : ""}`;
+
+/** How often the page asks which files have been downloaded. */
+const POLL_MS = 1500;
+
+/** The preview a file gets, decided by its type as the server sends it. */
+function Preview(props: { readonly file: Offered; readonly index: number }) {
+	const [broken, setBroken] = useState(false);
+	const src = fileUrl(props.index, false);
+	const type = props.file.type;
+	// A format the browser cannot show is still offered, just not previewed.
+	if (broken) return null;
+	if (type.startsWith("image/")) {
+		return (
+			<a href={src} target="_blank" rel="noopener" className="block">
+				<img
+					src={src}
+					alt={props.file.name}
+					loading="lazy"
+					onError={() => setBroken(true)}
+					className="max-h-80 w-full rounded-md bg-zinc-100 object-contain dark:bg-zinc-900"
+				/>
+			</a>
+		);
+	}
+	if (type.startsWith("video/")) {
+		return (
+			// biome-ignore lint/a11y/useMediaCaption: the agent's own files come with no captions to offer
+			<video
+				src={src}
+				controls
+				playsInline
+				preload="metadata"
+				onError={() => setBroken(true)}
+				className="max-h-96 w-full rounded-md bg-black"
+			/>
+		);
+	}
+	if (type.startsWith("audio/")) {
+		return (
+			// biome-ignore lint/a11y/useMediaCaption: the agent's own files come with no captions to offer
+			<audio
+				src={src}
+				controls
+				preload="metadata"
+				onError={() => setBroken(true)}
+				className="w-full"
+			/>
+		);
+	}
+	return null;
+}
+
+/** The extension, as a badge for a file with no preview. */
+const extension = (name: string): string => {
+	const dot = name.lastIndexOf(".");
+	return dot > 0 ? name.slice(dot + 1, dot + 5).toUpperCase() : "FILE";
+};
+
+function Download(props: {
+	readonly prompt?: string;
+	readonly files: ReadonlyArray<Offered>;
+}) {
+	const [got, setGot] = useState<ReadonlySet<number>>(new Set());
+	const [active, setActive] = useState(0);
+	// Set by Done, after which the server is on its way out.
+	const [finished, setFinished] = useState(false);
+
+	// The server is the one that knows: the browser hands a download to its
+	// own manager, and the page never hears how it went.
+	useEffect(() => {
+		if (finished) return;
+		let stopped = false;
+		const poll = async () => {
+			try {
+				const response = await fetch("/api/downloads", {
+					headers: { "x-infer-token": TOKEN },
+				});
+				if (!response.ok || stopped) return;
+				const body = (await response.json()) as {
+					downloaded: ReadonlyArray<number>;
+					active: number;
+				};
+				setGot(new Set(body.downloaded));
+				setActive(body.active);
+			} catch {}
+		};
+		void poll();
+		const timer = setInterval(poll, POLL_MS);
+		return () => {
+			stopped = true;
+			clearInterval(timer);
+		};
+	}, [finished]);
+
+	const count = props.files.length;
+	const total = props.files.reduce((sum, file) => sum + file.size, 0);
+	const status = [
+		`${count} file${count === 1 ? "" : "s"} · ${formatSize(total)}`,
+		got.size > 0 ? `${got.size} downloaded` : undefined,
+		active > 0 ? `${active} in progress` : undefined,
+	]
+		.filter(Boolean)
+		.join(" · ");
+	const link = `${button} inline-flex items-center justify-center no-underline`;
+
+	return (
+		<>
+			<Header
+				title={
+					props.prompt ?? (count === 1 ? "A file for you" : "Files for you")
+				}
+				status={status}
+				cancel={false}
+			>
+				{count > 1 ? (
+					<a
+						href={`/api/zip?token=${TOKEN}`}
+						download
+						className={`${link} border border-zinc-300 dark:border-zinc-700`}
+					>
+						Download all (.zip)
+					</a>
+				) : null}
+				<button
+					type="button"
+					className={primary}
+					title={
+						active > 0
+							? "Downloads still running finish before the command ends."
+							: undefined
+					}
+					onClick={() => {
+						setFinished(true);
+						void window.infer.done();
+					}}
+				>
+					Done
+				</button>
+			</Header>
+			<ul className="space-y-3">
+				{props.files.map((file, index) => (
+					<li
+						key={index}
+						data-downloaded={got.has(index) ? "" : undefined}
+						className="space-y-3 rounded-lg border border-zinc-200 p-3 dark:border-zinc-800"
+					>
+						<Preview file={file} index={index} />
+						<div className="flex items-center gap-3">
+							{/^(image|video|audio)\//.test(file.type) ? null : (
+								<span className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-zinc-100 font-mono text-[10px] font-semibold text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400">
+									{extension(file.name)}
+								</span>
+							)}
+							<div className="min-w-0 flex-1">
+								<div className="font-medium break-all">{file.name}</div>
+								<div className="text-sm text-zinc-500">
+									{formatSize(file.size)}
+									{got.has(index) ? (
+										<span className="text-emerald-700 dark:text-emerald-400">
+											{" "}
+											· ✓ downloaded
+										</span>
+									) : null}
+								</div>
+							</div>
+							{file.type.startsWith("application/pdf") ? (
+								<a
+									href={fileUrl(index, false)}
+									target="_blank"
+									rel="noopener"
+									className={`${link} border border-zinc-300 dark:border-zinc-700`}
+								>
+									Open
+								</a>
+							) : null}
+							<a
+								href={fileUrl(index, true)}
+								download={file.name}
+								aria-label={`Download ${file.name}`}
+								className={`${link} bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900`}
+							>
+								Download
+							</a>
+						</div>
+					</li>
+				))}
+			</ul>
+		</>
+	);
+}
+
 // --- mount -------------------------------------------------------------------
 
 function Page() {
@@ -932,6 +1141,8 @@ function Page() {
 					note={data.note}
 				/>
 			);
+		case "download":
+			return <Download prompt={data.prompt} files={data.files} />;
 	}
 }
 

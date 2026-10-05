@@ -2,7 +2,7 @@
  * `infer human` — ask the human: show them a page and wait for what they do.
  */
 
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { Console, Effect, FileSystem, Option, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 // The built-in page, embedded as text and served as an inline source: Bun
@@ -12,6 +12,7 @@ import { Argument, Command, Flag } from "effect/cli";
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import pageSource from "../human/page.tsx" with { type: "text" };
 import {
+	DownloadAnswer,
 	defaultUploadDir,
 	FIELD_TYPES,
 	type Item,
@@ -21,11 +22,12 @@ import {
 	parseSize,
 	toItems,
 	UploadAnswer,
+	zipNameFor,
 } from "../human/presets.ts";
 import { JsonText } from "../json.ts";
 import { emitJson, jsonFlag } from "../output.ts";
 import { Ui, UiError, type UiRequest, type UiResult } from "../ui.ts";
-import type { UploadRules } from "../ui-upload.ts";
+import type { OfferedFile } from "../ui-download.ts";
 
 const PAGE_SOURCE: string = pageSource;
 
@@ -310,7 +312,8 @@ const runPreset = (data: PresetData, flags: ServingFlags) =>
 const servePreset = (
 	data: PresetData,
 	flags: ServingFlags,
-	upload?: UploadRules,
+	files: Pick<UiRequest, "upload" | "download"> = {},
+	notes: Partial<typeof NOTE> = {},
 ) =>
 	Effect.gen(function* () {
 		const ui = yield* Ui;
@@ -327,9 +330,9 @@ const servePreset = (
 			share: flags.share,
 			tailwind: true,
 			open: flags.open,
-			upload,
+			...files,
 		});
-		yield* Console.error(`  ${NOTE[result.status]}`);
+		yield* Console.error(`  ${notes[result.status] ?? NOTE[result.status]}`);
 		return result;
 	});
 
@@ -649,7 +652,7 @@ const uploadCmd = Command.make(
 					note: !flags.noNote,
 				},
 				flags,
-				{ dir, accept, maxFiles, maxBytes },
+				{ upload: { dir, accept, maxFiles, maxBytes } },
 			);
 			if (flags.json) return yield* emitJson(result);
 			if (result.status !== "submitted") return;
@@ -710,6 +713,156 @@ files; cancelled means they declined, timeout that they never answered.`,
 	]),
 );
 
+/**
+ * The files to offer, checked before anything is served: each must be a
+ * readable regular file. The same path given twice is offered once.
+ */
+const offerFiles = (paths: ReadonlyArray<string>) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem;
+		const unique = [...new Set(paths.map((path) => resolve(path)))];
+		return yield* Effect.forEach(unique, (path) =>
+			Effect.gen(function* () {
+				const info = yield* fs.stat(path);
+				if (info.type === "Directory") {
+					return yield* Effect.fail(
+						new UiError({
+							reason: `${path} is a folder. Pass the files in it (${path}/*), or zip it first.`,
+						}),
+					);
+				}
+				if (info.type !== "File") {
+					return yield* Effect.fail(
+						new UiError({ reason: `${path} is not a regular file.` }),
+					);
+				}
+				yield* fs.access(path, { readable: true });
+				return {
+					path,
+					name: basename(path),
+					size: Number(info.size),
+					type:
+						Bun.file(path).type.replace(/;\s*charset=.*$/i, "") ||
+						"application/octet-stream",
+				} satisfies OfferedFile;
+			}).pipe(
+				Effect.mapError((error) =>
+					error._tag === "UiError"
+						? error
+						: new UiError({
+								reason:
+									error.reason._tag === "NotFound"
+										? `No such file: ${path}`
+										: error.reason._tag === "PermissionDenied"
+											? `Cannot read ${path}: permission denied.`
+											: `Cannot offer ${path}: ${error.message}`,
+							}),
+				),
+			),
+		);
+	});
+
+/** How a download page ended; it has no answer, only Done. */
+const DOWNLOAD_NOTE: Partial<typeof NOTE> = {
+	done: "Done.",
+	timeout:
+		"Timed out — they never pressed Done. Files they downloaded are still listed.",
+};
+
+const downloadCmd = Command.make(
+	"download",
+	{
+		files: Argument.String("file").pipe(
+			Argument.atLeast(1),
+			Argument.withDescription(
+				"The files to hand over. Only these are reachable from the page, by their position in this list. Folders are refused: pass the files in them.",
+			),
+		),
+		prompt: Flag.String("prompt").pipe(
+			Flag.withMetavar("text"),
+			Flag.optional,
+			Flag.withDescription(
+				"What the files are, shown at the top of the page: 'The final cut, and its thumbnail'.",
+			),
+		),
+		...servingFlags,
+	},
+	(flags) =>
+		Effect.gen(function* () {
+			const files = yield* offerFiles(flags.files);
+			const result = yield* servePreset(
+				{
+					kind: "download",
+					prompt: Option.getOrUndefined(flags.prompt),
+					files: files.map(({ name, size, type }) => ({ name, size, type })),
+				},
+				flags,
+				{
+					download: {
+						files,
+						zipName: zipNameFor(files.map((file) => file.path)),
+					},
+				},
+				DOWNLOAD_NOTE,
+			);
+			if (flags.json) return yield* emitJson(result);
+			const answer = yield* Schema.decodeUnknownEffect(DownloadAnswer)(
+				result.payload,
+			).pipe(
+				Effect.mapError(
+					() =>
+						new UiError({
+							reason: "The page server answered without a list of downloads.",
+						}),
+				),
+			);
+			const count = answer.downloaded.length;
+			yield* Console.error(
+				`  ${count} of ${files.length} file${files.length === 1 ? "" : "s"} downloaded.`,
+			);
+			if (count > 0) {
+				yield* Console.log(
+					answer.downloaded.map((file) => file.path).join("\n"),
+				);
+			}
+		}),
+).pipe(
+	Command.withShortDescription("Hand the human files to save."),
+	Command.withDescription(
+		`Hand files to the human. The page lists them with a Download button
+each, previews images, plays video and audio, opens PDFs in the browser,
+and offers Download all as one .zip when there are several. Files stream
+from disk with resume and seeking, so size is no object. Only the files
+named here can be fetched. Blocks until they press Done (which waits for
+downloads still running), the timeout expires, or the command is
+interrupted.
+
+A file counts as downloaded once every byte of it was sent to a download —
+its own Download button, a resumed download, or a whole Download all
+archive. Watching a video or opening a PDF in the page does not count.
+
+stdout: the downloaded files' absolute paths, one per line, in the order
+given; a summary goes to stderr. Printed however it ended, since a file they
+downloaded is theirs even if they never pressed Done. Nothing on stdout means
+nothing was downloaded.
+
+--json prints the same JSON as ask, with payload
+{"downloaded": [{"path", "name", "size"}, ...]}. status is done when they
+pressed Done, timeout when they never did.`,
+	),
+	Command.withExamples([
+		{
+			command:
+				"infer human download out/final.mp4 out/thumbnail.png --prompt 'The final cut' --share",
+			description: "Hand a video and its thumbnail to a phone",
+		},
+		{
+			command: "infer human download report.pdf data.csv --json",
+			description: "Offer two files, and learn which were saved",
+		},
+	]),
+);
+
 export const humanCmd = Command.make("human").pipe(
 	Command.withShortDescription(
 		"Ask the human: show them a page and get their answer back.",
@@ -722,7 +875,8 @@ person at the keyboard. The page is a .tsx file opened in their browser,
 and the command blocks until they act on it, so the answer is theirs.
 
 For the common shapes no page is needed: pick, approve, rank, edit and
-form take only data, and upload has the human send you files. For anything
+form take only data, upload has the human send you files, and download
+hands files to them. For anything
 else, ask and present serve a .tsx page you write. The page opens on this computer by default; add --share
 to open it on another device, such as a phone.`,
 	),
@@ -733,6 +887,7 @@ to open it on another device, such as a phone.`,
 		editCmd,
 		formCmd,
 		uploadCmd,
+		downloadCmd,
 		askCmd,
 		presentCmd,
 	]),

@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { defaultUploadDir, parseFormFields, toItems } from "./presets.ts";
+import {
+	defaultUploadDir,
+	parseFormFields,
+	toItems,
+	zipNameFor,
+} from "./presets.ts";
 
 describe("toItems", () => {
 	test("strings and numbers are their own label, answered by position", () => {
@@ -98,5 +103,18 @@ describe("defaultUploadDir", () => {
 		expect(defaultUploadDir(new Date(2026, 9, 2, 9, 5))).toBe(
 			"uploads/2026-10-02-0905",
 		);
+	});
+});
+
+describe("zipNameFor", () => {
+	test("is the files' folder when they share one", () => {
+		expect(zipNameFor(["/work/renders/a.png", "/work/renders/b.png"])).toBe(
+			"renders.zip",
+		);
+	});
+
+	test("is files.zip when they come from several, or from the root", () => {
+		expect(zipNameFor(["/a/x.png", "/b/y.png"])).toBe("files.zip");
+		expect(zipNameFor(["/x.png", "/y.png"])).toBe("files.zip");
 	});
 });

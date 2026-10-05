@@ -9,6 +9,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { basename, dirname } from "node:path";
 import { Option, Schema } from "effect";
 import { JsonObject } from "../json.ts";
 import { dataUri } from "../render-html.ts";
@@ -84,6 +85,16 @@ export type PresetData =
 			readonly maxBytes?: number;
 			/** Whether to offer a note beside the files. */
 			readonly note: boolean;
+	  }
+	| {
+			readonly kind: "download";
+			readonly prompt?: string;
+			/** The files on offer; each is fetched by its position here. */
+			readonly files: ReadonlyArray<{
+				readonly name: string;
+				readonly size: number;
+				readonly type: string;
+			}>;
 	  };
 
 /** Anything shown as text: strings as they are, structures as indented JSON. */
@@ -236,3 +247,26 @@ export const UploadAnswer = Schema.Struct({
 	note: Schema.optional(Schema.String),
 });
 export type UploadAnswer = typeof UploadAnswer.Type;
+
+/** What the page server answers a download page with, however it ended. */
+export const DownloadAnswer = Schema.Struct({
+	downloaded: Schema.Array(
+		Schema.Struct({
+			path: Schema.String,
+			name: Schema.String,
+			size: Schema.Finite,
+		}),
+	),
+});
+export type DownloadAnswer = typeof DownloadAnswer.Type;
+
+/**
+ * What Download all saves the archive as: the files' folder, when they share
+ * one, as in `renders.zip`; otherwise `files.zip`.
+ */
+export const zipNameFor = (paths: ReadonlyArray<string>): string => {
+	const folders = new Set(paths.map((path) => dirname(path)));
+	const [only] = folders;
+	const name = folders.size === 1 && only ? basename(only) : "";
+	return `${name === "" || name === "/" ? "files" : name}.zip`;
+};

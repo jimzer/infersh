@@ -54,14 +54,24 @@ import { TAILWIND_NAME, TAILWIND_PACKAGE } from "./tailwind.ts";
 // directory. This file must therefore never be imported normally.
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import childSource from "./ui-child.ts" with { type: "text" };
-// The child's one import, written beside it. Only its types may be imported
-// normally: Bun's bundler refuses one file as both text and a module.
+// The child's own imports, written beside it. Only their types may be
+// imported normally: Bun's bundler refuses one file as both text and a module.
+// @ts-expect-error text import: Bun inlines the file contents as a string
+import downloadSource from "./ui-download.ts" with { type: "text" };
+import type { DownloadRules } from "./ui-download.ts";
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import uploadSource from "./ui-upload.ts" with { type: "text" };
 import type { UploadRules } from "./ui-upload.ts";
+// @ts-expect-error text import: Bun inlines the file contents as a string
+import zipSource from "./ui-zip.ts" with { type: "text" };
 
 const CHILD_SOURCE: string = childSource;
-const UPLOAD_SOURCE: string = uploadSource;
+/** Everything the child imports, by the name it imports it under. */
+const CHILD_MODULES: Readonly<Record<string, string>> = {
+	"ui-download.ts": downloadSource,
+	"ui-upload.ts": uploadSource,
+	"ui-zip.ts": zipSource,
+};
 
 export class UiError extends Data.TaggedError("UiError")<{
 	readonly reason: string;
@@ -101,6 +111,11 @@ export interface UiRequest {
 	 * payload then lists the saved files rather than what the page sent.
 	 */
 	readonly upload?: UploadRules;
+	/**
+	 * Offers these files to the page, by position. The answer's payload then
+	 * lists the files downloaded rather than what the page sent.
+	 */
+	readonly download?: DownloadRules;
 }
 
 export interface UiShape {
@@ -532,13 +547,18 @@ const make = (platform: Context.Context<Platform>): UiShape => ({
 
 			const childPath = join(dir, "ui-child.ts");
 			yield* writeFile(childPath, CHILD_SOURCE);
-			yield* writeFile(join(dir, "ui-upload.ts"), UPLOAD_SOURCE);
+			yield* Effect.forEach(
+				Object.entries(CHILD_MODULES),
+				([name, source]) => writeFile(join(dir, name), source),
+				{ discard: true },
+			);
 			const job = JSON.stringify({
 				token,
 				port: request.port,
 				timeoutMs: request.timeoutMs,
 				pagePath,
 				upload: request.upload,
+				download: request.download,
 			});
 			const started = Date.now();
 
