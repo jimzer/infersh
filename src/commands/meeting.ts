@@ -140,11 +140,16 @@ again with --from <dir>. On speakers rather than headphones the mic also
 hears the other side; those echoes are dropped from "Me" when they repeat
 what "Them" said at the same moment.
 
+Only speech is transcribed: silence is cut out first (Whisper invents
+"Thank you." or "Merci." over it) and timestamps mapped back. Without
+--language, the other side's language is detected and reused for the mic.
+
 Writes into the folder:
   mic.caf, system.caf                   the two tracks as recorded
-  mic.ogg, system.ogg                   compressed copies, as uploaded
+  mic.ogg, system.ogg                   the speech only, as uploaded
   mic.transcript.json, system.transcript.json
-                                        Groq's raw response per track
+                                        every segment per track, where
+                                        speech was found, the language
   transcript.md, transcript.json        both tracks merged by time
 stdout is the path of transcript.md.
 

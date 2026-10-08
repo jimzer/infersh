@@ -18,8 +18,10 @@ infer meeting --from ~/Documents/infer/meetings/2026-10-02-1430   # transcribe a
   `~/Documents/infer/meetings/<date-time>/` unless `-o` says otherwise —
   outside the working directory, so a private recording never lands in a
   repository. The folder also holds the two audio
-  tracks (`mic.caf`, `system.caf`, 16 kHz), Groq's raw response per track
-  (`mic.transcript.json`, `system.transcript.json`) and `transcript.json`.
+  tracks (`mic.caf`, `system.caf`, 16 kHz), every segment per track with where
+  speech was found (`mic.transcript.json`, `system.transcript.json`) and
+  `transcript.json`. Silence is cut out before transcription, so Whisper's
+  usual filler over silence ("Thank you.", "Merci.") does not appear.
 - **Speaker labels come from the tracks, not diarization**: `--me` is the
   microphone, `--them` is everyone on the computer's audio, together.
 - **No cleanup is done.** The transcript is speech recognition as heard: names

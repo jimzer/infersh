@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { stripVTControlCharacters as plain } from "node:util";
-import { mergeTracks, meterLine } from "./meeting.ts";
+import { languageCode, mergeTracks, meterLine } from "./meeting.ts";
 
 describe("meterLine", () => {
 	test("shows elapsed time and a bar per track", () => {
@@ -69,5 +69,13 @@ describe("mergeTracks", () => {
 			},
 		]);
 		expect(turns).toEqual([]);
+	});
+});
+
+describe("languageCode", () => {
+	test("maps Whisper's language names to ISO-639-1", () => {
+		expect(languageCode("French")).toBe("fr");
+		expect(languageCode("english")).toBe("en");
+		expect(languageCode("Klingon")).toBeUndefined();
 	});
 });

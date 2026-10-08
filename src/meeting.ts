@@ -28,6 +28,13 @@ import { Groq } from "./groq.ts";
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import captureSource from "./meeting/capture.swift" with { type: "text" };
 import { cacheDir, run } from "./stage.ts";
+import {
+	frameLevels,
+	SAMPLE_RATE,
+	speechRegions,
+	splice,
+	toOriginal,
+} from "./vad.ts";
 
 export class MeetingError extends Data.TaggedError("MeetingError")<{
 	readonly reason: string;
@@ -410,8 +417,29 @@ const Segment = Schema.Struct({
 });
 export type Segment = typeof Segment.Type;
 const Verbose = Schema.fromJsonString(
-	Schema.Struct({ segments: Schema.Array(Segment) }),
+	Schema.Struct({
+		/** The detected language, as an English name: "French". */
+		language: Schema.optionalKey(Schema.String),
+		segments: Schema.Array(Segment),
+	}),
 );
+
+/**
+ * The ISO-639-1 code for a language name as Whisper reports it ("French" →
+ * "fr"), found by asking Intl for the English name of every two-letter code.
+ */
+export const languageCode = (name: string): string | undefined => {
+	const names = new Intl.DisplayNames(["en"], { type: "language" });
+	const wanted = name.trim().toLowerCase();
+	const letters = "abcdefghijklmnopqrstuvwxyz";
+	for (const a of letters) {
+		for (const b of letters) {
+			const code = a + b;
+			if (names.of(code)?.toLowerCase() === wanted) return code;
+		}
+	}
+	return undefined;
+};
 
 export interface Turn {
 	readonly speaker: string;
@@ -466,7 +494,7 @@ export const mergeTracks = (
 				end: segment.end + track.offset,
 				text: segment.text.trim(),
 			}))
-			.filter((turn) => turn.text.length > 0),
+			.filter((turn) => /[^\s.…]/.test(turn.text)),
 	}));
 	const all = shifted.flatMap((track) => {
 		if (track.echoOf === undefined) return track.turns;
@@ -538,56 +566,114 @@ export const transcribe = Effect.fn("Meeting.transcribe")(function* (
 	);
 
 	yield* Console.error("Transcribing...");
+	// Without --language, the other side's track — which carries most of the
+	// talk — is transcribed first and its language reused for the mic, whose
+	// stretches of near-silence otherwise get misdetected (French heard as
+	// English, with invented English filler).
+	const detected = yield* Ref.make(Option.none<string>());
 	const transcribed = yield* Effect.forEach(
 		present,
 		(track) =>
 			Effect.gen(function* () {
 				const input = join(options.dir, `${track.name}.caf`);
 				const compressed = join(options.dir, `${track.name}.ogg`);
-				// 16 kHz mono Opus: what Whisper hears anyway, at about 11 MB
-				// an hour, so a long meeting stays under Groq's 25 MB upload.
-				const encoded = yield* run(
-					"ffmpeg",
-					[
-						"-v",
-						"error",
-						"-i",
-						input,
-						"-ar",
-						"16000",
-						"-ac",
-						"1",
-						"-c:a",
-						"libopus",
-						"-b:a",
-						"24k",
-						"-y",
-						compressed,
-					],
-					{ stdout: "ignore", stderr: "pipe" },
-				).pipe(Effect.mapError((e) => new MeetingError({ reason: e.message })));
-				if (encoded.code !== 0) {
-					return yield* fail(`ffmpeg failed on ${input}:\n${encoded.stderr}`);
+				const pcm = join(options.dir, `.${track.name}.pcm`);
+				const ffmpeg = (args: ReadonlyArray<string>) =>
+					run("ffmpeg", ["-v", "error", ...args], {
+						stdout: "ignore",
+						stderr: "pipe",
+					}).pipe(
+						Effect.mapError((e) => new MeetingError({ reason: e.message })),
+						Effect.flatMap((result) =>
+							result.code === 0
+								? Effect.void
+								: fail(`ffmpeg failed on ${input}:\n${result.stderr}`),
+						),
+					);
+				const io = <A, E extends { readonly message: string }>(
+					effect: Effect.Effect<A, E>,
+				) =>
+					effect.pipe(
+						Effect.mapError((e) => new MeetingError({ reason: e.message })),
+					);
+
+				// Only speech is sent: silence is where Whisper invents "Merci."
+				// The track is decoded to raw 16 kHz samples, its speech found
+				// and spliced together, and the result encoded for upload.
+				yield* ffmpeg([
+					"-i",
+					input,
+					"-ar",
+					String(SAMPLE_RATE),
+					"-ac",
+					"1",
+					"-f",
+					"s16le",
+					"-y",
+					pcm,
+				]);
+				const bytes = yield* io(fs.readFile(pcm));
+				const samples = new Int16Array(
+					bytes.buffer.slice(
+						bytes.byteOffset,
+						bytes.byteOffset + (bytes.byteLength & ~1),
+					),
+				);
+				const regions = speechRegions(frameLevels(samples));
+				const { audio, map } = splice(samples, regions);
+				const speech = audio.length / SAMPLE_RATE;
+				const total = samples.length / SAMPLE_RATE;
+				yield* Console.error(
+					`  ${track.speaker}: ${clock(speech)} of speech in ${clock(total)}`,
+				);
+				const base = {
+					speaker: track.speaker,
+					offset:
+						track.start !== undefined && Number.isFinite(origin)
+							? track.start - origin
+							: 0,
+					...(track.name === "mic" ? { echoOf: options.them } : {}),
+				};
+				if (audio.length === 0) {
+					yield* io(fs.remove(pcm));
+					return { ...base, segments: [] as ReadonlyArray<Segment> };
 				}
+				yield* io(
+					fs.writeFile(
+						pcm,
+						new Uint8Array(audio.buffer, audio.byteOffset, audio.byteLength),
+					),
+				);
+				// 16 kHz mono Opus: what Whisper hears anyway, at about 11 MB
+				// an hour of speech, under Groq's 25 MB upload.
+				yield* ffmpeg([
+					"-f",
+					"s16le",
+					"-ar",
+					String(SAMPLE_RATE),
+					"-ac",
+					"1",
+					"-i",
+					pcm,
+					"-c:a",
+					"libopus",
+					"-b:a",
+					"24k",
+					"-y",
+					compressed,
+				]);
+				yield* io(fs.remove(pcm));
 				const body = yield* groq
 					.transcribe({
 						file: compressed,
 						model: "whisper-large-v3-turbo",
-						language: options.language,
+						language:
+							options.language ??
+							Option.getOrUndefined(yield* Ref.get(detected)),
 						responseFormat: "verbose_json",
 						granularities: ["segment"],
 						optimize: false,
 					})
-					.pipe(
-						Effect.mapError((e) => new MeetingError({ reason: e.message })),
-					);
-				// Groq's own response, kept per track: the raw material, with
-				// every segment's timing and confidence, before any merging.
-				yield* fs
-					.writeFileString(
-						join(options.dir, `${track.name}.transcript.json`),
-						body,
-					)
 					.pipe(
 						Effect.mapError((e) => new MeetingError({ reason: e.message })),
 					);
@@ -599,17 +685,40 @@ export const transcribe = Effect.fn("Meeting.transcribe")(function* (
 							}),
 					),
 				);
-				return {
-					speaker: track.speaker,
-					offset:
-						track.start !== undefined && Number.isFinite(origin)
-							? track.start - origin
-							: 0,
-					segments: parsed.segments,
-					...(track.name === "mic" ? { echoOf: options.them } : {}),
-				};
+				// Back on the meeting's clock: Whisper timed the spliced audio.
+				const segments = parsed.segments.map((segment) => ({
+					...segment,
+					start: toOriginal(segment.start, map),
+					end: toOriginal(segment.end, map),
+				}));
+				// Kept per track: every segment Whisper returned, with its
+				// timing and confidence, before echoes are removed and the
+				// tracks merged — plus where speech was found.
+				yield* io(
+					fs.writeFileString(
+						join(options.dir, `${track.name}.transcript.json`),
+						JSON.stringify(
+							{
+								language: parsed.language,
+								seconds: total,
+								speechSeconds: speech,
+								speech: regions,
+								segments,
+							},
+							null,
+							2,
+						),
+					),
+				);
+				if (parsed.language !== undefined) {
+					const code = languageCode(parsed.language);
+					if (code !== undefined && Option.isNone(yield* Ref.get(detected))) {
+						yield* Ref.set(detected, Option.some(code));
+					}
+				}
+				return { ...base, segments };
 			}),
-		{ concurrency: 2 },
+		{ concurrency: 1 },
 	);
 
 	const turns = mergeTracks(transcribed);
