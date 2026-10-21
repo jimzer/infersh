@@ -39,6 +39,7 @@ time to discover and would otherwise be rediscovered the hard way.
 | [32](0032-signals-interrupt-the-whole-cli.md) | Signals interrupt the whole CLI |
 | [33](0033-human-upload-streams-files-to-disk.md) | `human upload` streams each file to disk as it is added — and Bun's 128 MB body limit |
 | [34](0034-human-download-serves-named-files-by-position.md) | `human download` serves the named files by position, and counts only whole downloads — and Bun drops `Content-Length` on streams |
+| [35](0035-serve-runs-each-job-as-a-child-in-its-own-directory.md) | `infer serve` runs each job as a child `infer`, in its own directory |
 
 ## Writing one
 

@@ -10,7 +10,15 @@
 
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { Console, Data, Effect, FileSystem, type Scope, Stream } from "effect";
+import {
+	Console,
+	Data,
+	type Duration,
+	Effect,
+	FileSystem,
+	type Scope,
+	Stream,
+} from "effect";
 import { ChildProcess, type ChildProcessSpawner } from "effect/process";
 
 export class StageError extends Data.TaggedError("StageError")<{
@@ -92,6 +100,13 @@ export interface RunOptions {
 	readonly env?: Record<string, string | undefined>;
 	/** `ignore` gives the child an empty stdin, so one that reads it cannot hang. */
 	readonly stdin?: "ignore" | "inherit" | "pipe";
+	/** Text written to the child's stdin, which is then closed. Overrides `stdin`. */
+	readonly input?: string;
+	/**
+	 * When interrupted, how long a child gets to exit after SIGTERM before it
+	 * is sent SIGKILL. Without it, interruption waits as long as the child takes.
+	 */
+	readonly forceKillAfter?: Duration.Input;
 }
 
 export interface RunResult {
@@ -125,7 +140,16 @@ export const run = (
 			const handle = yield* ChildProcess.make(command, [...args], {
 				...(options.cwd ? { cwd: options.cwd } : {}),
 				...(options.env ? { env: options.env } : {}),
-				...(options.stdin ? { stdin: options.stdin } : {}),
+				...(options.input !== undefined
+					? {
+							stdin: Stream.make(new TextEncoder().encode(options.input)),
+						}
+					: options.stdin
+						? { stdin: options.stdin }
+						: {}),
+				...(options.forceKillAfter !== undefined
+					? { forceKillAfter: options.forceKillAfter }
+					: {}),
 				stdout,
 				stderr,
 			});

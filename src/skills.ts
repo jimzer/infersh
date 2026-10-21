@@ -31,6 +31,8 @@ import remotionMd from "./skills/references/remotion.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import renderMd from "./skills/references/render.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
+import serveMd from "./skills/references/serve.md" with { type: "text" };
+// @ts-expect-error text import: Bun inlines the file contents as a string
 import skillMd from "./skills/SKILL.md" with { type: "text" };
 
 export class SkillsError extends Data.TaggedError("SkillsError")<{
@@ -60,6 +62,7 @@ export const SKILL_FILES: ReadonlyArray<{
 	{ path: "references/each.md", contents: eachMd as string },
 	{ path: "references/media.md", contents: mediaMd as string },
 	{ path: "references/meeting.md", contents: meetingMd as string },
+	{ path: "references/serve.md", contents: serveMd as string },
 ];
 
 /**

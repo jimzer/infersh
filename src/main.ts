@@ -17,6 +17,7 @@ import { mediaCmd } from "./commands/media.ts";
 import { meetingCmd } from "./commands/meeting.ts";
 import { openrouterCmd } from "./commands/openrouter.ts";
 import { renderCmd } from "./commands/render.ts";
+import { serveCmd } from "./commands/serve.ts";
 import { shotCmd } from "./commands/shot.ts";
 import { skillsCmd } from "./commands/skills.ts";
 import { updateCmd } from "./commands/update.ts";
@@ -66,6 +67,7 @@ const inferCmd = Command.make("infer").pipe(
 		meetingCmd,
 		openrouterCmd,
 		renderCmd,
+		serveCmd,
 		shotCmd,
 		skillsCmd,
 		updateCmd,

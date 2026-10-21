@@ -43,6 +43,13 @@ bundle v=version:
     @chmod +x dist/infer.js
     @echo "built dist/infer.js v{{v}} ($(wc -c < dist/infer.js | tr -d ' ') bytes)"
 
+# Build the Docker image that runs `infer serve` (see Dockerfile)
+docker tag="infer": bundle
+    docker build -t {{tag}} \
+        --build-arg BUN_VERSION={{bun_version}} \
+        --build-arg PLAYWRIGHT_VERSION=$(sed -n 's/^export const PLAYWRIGHT_VERSION = "\(.*\)";/\1/p' src/render.ts) \
+        .
+
 # Versions pinned in code, against the latest published ones
 pins:
     @bun run scripts/pins.ts

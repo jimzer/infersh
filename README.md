@@ -140,6 +140,16 @@ infer media audio meeting.mkv --for-transcription  # 16 kHz mono FLAC
 
 Needs `ffmpeg` and `ffprobe` on PATH; for anything else, use ffmpeg directly.
 
+### Serve
+
+```bash
+INFER_SERVE_TOKEN=secret infer serve --host 0.0.0.0
+curl -s localhost:8787/v1/run -H "Authorization: Bearer secret" -H 'content-type: application/json' \
+  -d '{"args":["shot","example.com","--json"]}'
+```
+
+Every command over HTTP, for an app or another container: `POST /v1/run` takes the argv, runs it in a fresh directory, and returns the exit code, output and download URLs for the files it wrote. API reference at `/docs`. `just docker` builds an image with Bun, ffmpeg and Chrome; keys come from env vars.
+
 ### Skills
 
 ```bash
