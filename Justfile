@@ -14,16 +14,17 @@ _default:
 install:
     bun install
 
-# Biome (lint + format), TypeScript typecheck, and tests
+# Format, lint, typecheck and test, all with Bun (ADR 36)
 checkall: lint typecheck test
 
-# Lint and autofix with Biome
+# Format, then lint and apply safe fixes; any warning fails
 lint:
-    bunx biome check --fix --unsafe
+    bun fmt
+    bun lint --fix --max-warnings 0
 
-# Typecheck with tsc, no emit
+# Typecheck, no emit
 typecheck:
-    bunx tsc --noEmit
+    bun check
 
 # Run the test suite
 test:

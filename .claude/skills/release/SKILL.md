@@ -58,8 +58,9 @@ Bumps happen **before** step 3, so they are part of the diff this release
 describes — a new Remotion or Tailwind can change what users' renders look
 like, and that belongs in the notes.
 
-For `bun outdated`: bumping Biome means updating the `$schema` version in
-`biome.json` to match, or every `just checkall` prints a warning.
+Formatting, linting and typechecking come with Bun itself (ADR 36), so there
+is no tool to bump for them. CI runs them on Bun canary until a stable release
+ships `bun lint`; once one does, move `ci.yml` back to `latest`.
 
 ## 3. Establish the baseline
 

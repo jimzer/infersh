@@ -87,7 +87,7 @@ export const sanitizeName = (raw: string): string => {
 	const last = raw.split(/[/\\]/).pop() ?? "";
 	const cleaned = last
 		.normalize("NFC")
-		// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what is being removed
+		// eslint-disable-next-line no-control-regex -- control characters are what is being removed
 		.replace(/[\u0000-\u001f\u007f<>:"|?*]/g, "_")
 		.replace(/^[\s.]+/, "")
 		.replace(/[\s.]+$/, "");

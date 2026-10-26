@@ -27,7 +27,10 @@ with `command not found` — and a bare `biome` may silently resolve to a
 
 Build output has to be excluded from the tools explicitly. Biome does not read
 `.gitignore` by default (`vcs.useIgnoreFile` must be enabled) and lints
-`dist/` otherwise, producing hundreds of errors from the minified bundle.
+`dist/` otherwise, producing hundreds of errors from the minified bundle. Superseded by
+ADR 36: Bun's own `fmt`, `lint` and `check` replaced Biome and `tsc`; all
+three read `.gitignore`, and they are built into `bun`, so nothing resolves
+through `node_modules/.bin` any more.
 `tsconfig.json` has `allowJs: true`, so it needs `include`/`exclude` for the
 same reason.
 

@@ -11,9 +11,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Canary until a stable Bun ships `bun lint` (ADR 36). Releases build on
+      # stable: see release.yml.
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: canary
 
       - uses: extractions/setup-just@v3
 
@@ -21,6 +23,10 @@ jobs:
 
       - name: Lint, typecheck, test
         run: just checkall
+
+      # `just lint` formats and fixes in place, so a clean run changes nothing.
+      - name: Formatted and lint-fixed
+        run: git diff --exit-code
 
       - name: Bundle
         run: just bundle

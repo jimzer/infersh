@@ -183,7 +183,7 @@ Keys live in the OS credential store — the macOS Keychain, libsecret on Linux,
 
 ```bash
 just install    # bun install
-just checkall   # biome + tsc + tests
+just checkall   # bun fmt + bun lint + bun check + tests
 just bundle     # build dist/infer.js
 just run --help # run from source
 ```

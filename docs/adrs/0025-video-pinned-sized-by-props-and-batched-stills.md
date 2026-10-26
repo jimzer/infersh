@@ -53,7 +53,8 @@ import Remotion, which is not installed here, so `tsc` cannot check them —
 and listing them in `exclude` does not help, because `tsc` still loads any file
 the program imports, text imports included. As JavaScript, with `allowJs` on
 and `checkJs` off, `tsc` reports nothing for them while Biome lints and formats
-them like everything else. Two consequences: the staged `package.json` is
+them like everything else (since ADR 36, `bun check`, `bun lint` and `bun fmt`
+treat them the same way). Two consequences: the staged `package.json` is
 `"type": "module"`, so relative imports in these files need their extension
 (`./Root.jsx`, `./composition.tsx`); and a bad frame is now written as a
 message, not thrown, so it does not arrive with a stack trace.

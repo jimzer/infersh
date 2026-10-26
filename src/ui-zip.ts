@@ -82,7 +82,7 @@ export const zipNames = (
 			raw
 				.split(/[/\\]/)
 				.pop()
-				// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what is being removed
+				// eslint-disable-next-line no-control-regex -- control characters are what is being removed
 				?.replace(/[\u0000-\u001f\u007f]/g, "_")
 				.replace(/^\.+$/, "") || "file";
 		const dot = base.lastIndexOf(".");

@@ -1,0 +1,17 @@
+# Bun is the whole toolchain: `bun fmt`, `bun lint` and `bun check` (ADR 36).
+
+[fmt]
+useTabs = true
+sortImports = true
+# Markdown is prose wrapped by hand, and padded tables are unreadable as source.
+ignorePatterns = ["**/*.md"]
+
+# On top of the defaults: what Biome's recommended set caught and Bun's
+# defaults do not.
+[lint.rules]
+"eqeqeq" = ["error", "smart"]
+"no-self-compare" = "error"
+"prefer-template" = "warn"
+"@typescript-eslint/no-non-null-assertion" = "warn"
+# An empty catch is how a best-effort step says failure is fine.
+"no-empty" = ["warn", { allowEmptyCatch = true }]

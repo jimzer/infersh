@@ -950,7 +950,7 @@ function Preview(props: { readonly file: Offered; readonly index: number }) {
 	}
 	if (type.startsWith("video/")) {
 		return (
-			// biome-ignore lint/a11y/useMediaCaption: the agent's own files come with no captions to offer
+			// eslint-disable-next-line jsx-a11y/media-has-caption -- the agent's own files come with no captions to offer
 			<video
 				src={src}
 				controls
@@ -963,7 +963,7 @@ function Preview(props: { readonly file: Offered; readonly index: number }) {
 	}
 	if (type.startsWith("audio/")) {
 		return (
-			// biome-ignore lint/a11y/useMediaCaption: the agent's own files come with no captions to offer
+			// eslint-disable-next-line jsx-a11y/media-has-caption -- the agent's own files come with no captions to offer
 			<audio
 				src={src}
 				controls

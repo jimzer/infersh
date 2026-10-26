@@ -307,6 +307,7 @@ export const parseFields = (text: string): ReadonlyArray<string> =>
 		.map((field) => field.trim())
 		.filter((field) => field !== "");
 
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- a recursive Map has to be an interface
 interface FieldTree extends Map<string, FieldTree> {}
 
 const fieldTree = (paths: ReadonlyArray<string>): FieldTree => {

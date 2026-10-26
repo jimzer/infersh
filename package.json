@@ -9,13 +9,9 @@
 	},
 	"scripts": {
 		"start": "bun run src/main.ts",
-		"lint": "biome check --fix --unsafe",
-		"typecheck": "tsc --noEmit",
-		"test": "bun test",
-		"checkall": "bun run lint && bun run typecheck && bun run test"
+		"test": "bun test"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.5.15",
 		"@types/bun": "1.4.2",
 		"@types/react": "^19.2.17",
 		"@types/react-dom": "^19.2.3",
