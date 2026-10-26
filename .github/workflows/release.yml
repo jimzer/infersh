@@ -21,8 +21,10 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - name: Lint, typecheck, test
-        run: just checkall
+      # No lint: stable Bun has no `bun lint` yet (ADR 36). CI lints the same
+      # commit on canary, and a release is only cut over green CI.
+      - name: Typecheck, test
+        run: just typecheck test
 
       # The git tag is the source of truth for the released version, so the
       # bundle is stamped from it rather than from package.json.

@@ -48,7 +48,8 @@ Biome, `biome.json` and the `tsc` step removed.**
   `package.json` that ran Biome, and without one it fails with `Script not
   found "lint"`. CI runs on canary until a stable release has it; release
   builds stay on stable, because the bundle records the Bun it was built with
-  and warns users on an older one.
+  and warns users on an older one. So the release workflow typechecks and
+  tests but does not lint; CI has already linted that commit on canary.
 - **A project script shadows the built-in.** Even where `bun lint` exists, a
   `lint` (or `check`) script in `package.json` runs instead, so those scripts
   are gone; `--no-script` did not override it on 1.4.4.
