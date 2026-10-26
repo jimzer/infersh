@@ -95,7 +95,7 @@ const CHILD_SOURCE: string = childSource;
  * render. It must equal the `playwright-core` devDependency, which supplies
  * the child's types; a test holds the two together. See `docs/adrs/0022`.
  */
-export const PLAYWRIGHT_VERSION = "1.63.0";
+export const PLAYWRIGHT_VERSION = "1.64.1";
 const PLAYWRIGHT_PACKAGE = `playwright-core@${PLAYWRIGHT_VERSION}`;
 const SHARED_SOURCE: string = sharedSource;
 
