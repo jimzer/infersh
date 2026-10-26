@@ -35,7 +35,7 @@ export const WORKER_SOURCE: string = workerSource;
  * and ships two or three releases a week. Unpinned, a render could change, or
  * break, between two runs with nothing changed here.
  */
-export const REMOTION_VERSION = "4.0.532";
+export const REMOTION_VERSION = "4.0.539";
 
 /** The React that Remotion release is tested against. */
 export const REACT_VERSION = "19.2.3";
