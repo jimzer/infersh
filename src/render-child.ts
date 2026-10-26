@@ -12,6 +12,7 @@
 
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+
 import { assetPathFor, buildHtml, formatFromPath } from "./render-shared.ts";
 
 interface Job {

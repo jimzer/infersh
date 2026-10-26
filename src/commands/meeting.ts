@@ -4,8 +4,10 @@
 
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+
 import { Console, Effect, Option } from "effect";
 import { Command, Flag } from "effect/cli";
+
 import { record, transcribe } from "../meeting.ts";
 import { emitJson, jsonFlag } from "../output.ts";
 

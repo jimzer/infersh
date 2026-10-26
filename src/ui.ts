@@ -15,6 +15,7 @@
  */
 
 import { join } from "node:path";
+
 import {
 	Console,
 	Context,
@@ -32,14 +33,15 @@ import {
 	Stream,
 } from "effect";
 import { ChildProcess, type ChildProcessSpawner } from "effect/process";
+
 import { escapeForScript, inlineScript } from "./html.ts";
+import { prependToHead } from "./render-html.ts";
 import {
 	bareImports,
 	buildStandalone,
 	type CompositionSource,
 	isolateComposition,
 } from "./render.ts";
-import { prependToHead } from "./render-html.ts";
 import {
 	install,
 	type Platform,

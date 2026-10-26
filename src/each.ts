@@ -9,6 +9,7 @@
  */
 
 import { join } from "node:path";
+
 import {
 	Console,
 	Crypto,
@@ -27,6 +28,7 @@ import {
 	Stream,
 } from "effect";
 import { Hex } from "effect/encoding";
+
 import { decodeEach, JsonObject, JsonText } from "./json.ts";
 import { run } from "./stage.ts";
 

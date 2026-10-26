@@ -12,6 +12,7 @@
  */
 
 import { basename, dirname, extname, join } from "node:path";
+
 // Text imports: Bun inlines the characters and never follows the imports
 // inside, which is what keeps Remotion out of this repo. Being text for the
 // whole build, these files must never be imported normally.

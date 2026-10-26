@@ -13,6 +13,7 @@
  */
 
 import { Composition } from "remotion";
+
 import Component, * as compositionModule from "./composition.tsx";
 import overrides from "./config.json";
 

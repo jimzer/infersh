@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import {
 	filterModels,
 	formatContext,
@@ -7,8 +8,8 @@ import {
 	parseEndpoints,
 	parseModels,
 	parseResponse,
-	type ResponseOptions,
 	responseBody,
+	type ResponseOptions,
 	usageOf,
 	validateSchema,
 } from "./openrouter.ts";

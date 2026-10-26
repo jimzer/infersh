@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
+
 import { Effect, Option, Redacted } from "effect";
+
 import {
 	layerMemory,
-	MissingKeyError,
 	mask,
+	MissingKeyError,
 	type ProviderId,
 	Secrets,
 	SecretsError,

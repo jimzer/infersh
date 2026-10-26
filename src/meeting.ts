@@ -11,6 +11,7 @@
 
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+
 import {
 	Console,
 	Data,
@@ -24,6 +25,7 @@ import {
 	Stream,
 } from "effect";
 import { ChildProcess } from "effect/process";
+
 import { Groq } from "./groq.ts";
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import captureSource from "./meeting/capture.swift" with { type: "text" };

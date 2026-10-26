@@ -12,8 +12,8 @@
  */
 
 import pkg from "../package.json";
-import { PLAYWRIGHT_VERSION } from "../src/render.ts";
 import { REACT_VERSION, REMOTION_VERSION } from "../src/render-video-source.ts";
+import { PLAYWRIGHT_VERSION } from "../src/render.ts";
 import { TAILWIND_NAME, TAILWIND_VERSION } from "../src/tailwind.ts";
 
 interface Pin {

@@ -13,6 +13,7 @@
  */
 
 import { Option, Predicate, Schema, Struct } from "effect";
+
 import { JsonObject, lenient } from "./json.ts";
 
 const Text = lenient(Schema.String);

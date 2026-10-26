@@ -5,6 +5,7 @@
 
 import { Console, Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
+
 import { layer, Media, MediaError, parseTime } from "../media.ts";
 import { emitJson, jsonFlag } from "../output.ts";
 

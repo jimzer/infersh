@@ -10,6 +10,7 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
+
 import {
 	Console,
 	Context,
@@ -20,6 +21,7 @@ import {
 	Schema,
 	type Scope,
 } from "effect";
+
 import { inlineScript } from "./html.ts";
 import { formatBytes } from "./output.ts";
 // Embedded as text: the bundler copies the characters and never follows the
@@ -33,8 +35,8 @@ import {
 	assetRef,
 	dataUri,
 	ENTRY_SOURCE,
-	HTML_CORE_DEPS,
 	hasDefaultExport,
+	HTML_CORE_DEPS,
 	htmlDocument,
 	prependToHead,
 	replaceJsonStrings,

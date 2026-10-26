@@ -3,8 +3,10 @@
  */
 
 import { basename, resolve } from "node:path";
+
 import { Console, Effect, Option, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
+
 import { JsonText } from "../json.ts";
 import { emitJson, jsonFlag } from "../output.ts";
 import {
@@ -541,8 +543,7 @@ const videoCmd = Command.make(
 				);
 			}
 			const frames = Option.getOrUndefined(parsedFrames) as
-				| ReadonlyArray<number>
-				| undefined;
+				ReadonlyArray<number> | undefined;
 			if (frames !== undefined && (from !== undefined || to !== undefined)) {
 				return yield* Effect.fail(
 					new RenderError({

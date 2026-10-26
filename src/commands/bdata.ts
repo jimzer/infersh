@@ -4,6 +4,7 @@
 
 import { Console, Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
+
 import {
 	Bdata,
 	BdataError,
@@ -20,8 +21,8 @@ import {
 	linkedinJobsInput,
 	linkedinPostsInput,
 	linkedinUrlKind,
-	METHODS,
 	mergeOptions,
+	METHODS,
 	parseInput,
 	REDDIT_COMMENTS_DATASET,
 	REDDIT_DATES,

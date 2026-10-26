@@ -13,6 +13,7 @@
 
 import { timingSafeEqual } from "node:crypto";
 import { isAbsolute, join, resolve, sep } from "node:path";
+
 import { BunHttpServer } from "@effect/platform-bun";
 import {
 	Clock,
@@ -48,6 +49,7 @@ import {
 	OpenApi,
 } from "effect/http-api";
 import { ChildProcessSpawner } from "effect/process";
+
 import { JsonText } from "./json.ts";
 import { run } from "./stage.ts";
 import { VERSION } from "./version.ts";

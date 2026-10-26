@@ -3,15 +3,17 @@
  */
 
 import { relative } from "node:path";
+
 import { Console, Effect } from "effect";
 import { Command, Flag, Prompt } from "effect/cli";
+
 import { emitJson, jsonFlag } from "../output.ts";
 import {
 	SKILL_FILES,
 	SKILL_NAME,
+	skillDir,
 	Skills,
 	SkillsError,
-	skillDir,
 	type Target,
 } from "../skills.ts";
 

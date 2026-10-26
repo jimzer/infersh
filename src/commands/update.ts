@@ -4,6 +4,7 @@
 
 import { Console, Effect } from "effect";
 import { Command, Flag } from "effect/cli";
+
 import { emitJson, jsonFlag } from "../output.ts";
 import {
 	installPath,

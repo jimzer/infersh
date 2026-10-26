@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { stripVTControlCharacters as plain } from "node:util";
+
 import { languageCode, mergeTracks, meterLine } from "./meeting.ts";
 
 describe("meterLine", () => {

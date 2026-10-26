@@ -11,6 +11,7 @@
  */
 
 import { basename, dirname, extname, join, resolve } from "node:path";
+
 import {
 	Console,
 	Context,
@@ -23,6 +24,7 @@ import {
 	Schema,
 	type Scope,
 } from "effect";
+
 import { ffmpegArgs as transcriptionFfmpegArgs } from "./groq.ts";
 import { lenient } from "./json.ts";
 import { type Platform, run, type StageError, tempDir } from "./stage.ts";
@@ -967,16 +969,14 @@ const atomically = <A, E, R>(
 /** Probes what was written, for the report. */
 const report = (output: string) =>
 	probe(output).pipe(
-		Effect.map(
-			(info): OutputReport => ({
-				output,
-				...(info.duration !== undefined ? { duration: info.duration } : {}),
-				...(info.video !== undefined
-					? { width: info.video.width, height: info.video.height }
-					: {}),
-				...(info.size !== undefined ? { size: info.size } : {}),
-			}),
-		),
+		Effect.map((info): OutputReport => ({
+			output,
+			...(info.duration !== undefined ? { duration: info.duration } : {}),
+			...(info.video !== undefined
+				? { width: info.video.width, height: info.video.height }
+				: {}),
+			...(info.size !== undefined ? { size: info.size } : {}),
+		})),
 	);
 
 /** Whether this ffmpeg can burn text in: drawtext needs libfreetype. */

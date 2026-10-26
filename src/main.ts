@@ -3,6 +3,7 @@
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import { Console, Effect, Exit, Layer, Runtime } from "effect";
 import { Command } from "effect/cli";
+
 import { updateCheck } from "./autoupdate.ts";
 import * as Bdata from "./bdata.ts";
 import * as Budget from "./budget.ts";

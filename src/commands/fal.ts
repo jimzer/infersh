@@ -4,6 +4,7 @@
 
 import { Console, Effect, Option, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
+
 import { extractInputSchema, Fal, FalError } from "../fal.ts";
 import { JsonObject } from "../json.ts";
 import { emitJson, jsonFlag } from "../output.ts";

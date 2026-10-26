@@ -5,6 +5,7 @@
 
 import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
+
 import {
 	Data,
 	type Duration,
@@ -14,6 +15,7 @@ import {
 	Schema,
 } from "effect";
 import { HttpClient } from "effect/http";
+
 import { decodeEach } from "./json.ts";
 import {
 	ASSET_NAME,

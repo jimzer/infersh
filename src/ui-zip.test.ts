@@ -2,13 +2,14 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
 	dosDateTime,
 	planZip,
 	writeZip,
 	type ZipEntry,
-	type ZipOptions,
 	zipNames,
+	type ZipOptions,
 } from "./ui-zip.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "infer-zip-test-"));

@@ -7,7 +7,9 @@
 
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+
 import { Context, Data, Effect, Layer } from "effect";
+
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import bdataMd from "./skills/references/bdata.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
@@ -23,9 +25,7 @@ import mediaMd from "./skills/references/media.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import meetingMd from "./skills/references/meeting.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
-import openrouterMd from "./skills/references/openrouter.md" with {
-	type: "text",
-};
+import openrouterMd from "./skills/references/openrouter.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import remotionMd from "./skills/references/remotion.md" with { type: "text" };
 // @ts-expect-error text import: Bun inlines the file contents as a string

@@ -10,6 +10,7 @@
 
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+
 import {
 	Console,
 	Data,
@@ -31,8 +32,7 @@ export class StageError extends Data.TaggedError("StageError")<{
 
 /** What staging needs from the platform; `BunServices.layer` provides both. */
 export type Platform =
-	| FileSystem.FileSystem
-	| ChildProcessSpawner.ChildProcessSpawner;
+	FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner;
 
 /** A fresh directory, removed when the enclosing scope closes. */
 export const tempDir = (

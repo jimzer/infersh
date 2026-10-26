@@ -8,7 +8,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { Effect } from "effect";
+
 import {
 	findAncestorClaude,
 	layer,
@@ -16,8 +18,8 @@ import {
 	RETIRED_FILES,
 	SKILL_FILES,
 	SKILL_NAME,
-	Skills,
 	skillDir,
+	Skills,
 } from "./skills.ts";
 
 /** An `exists` predicate over a fixed set of paths. */

@@ -4,6 +4,7 @@
 
 import { Console, Effect, Option, Schema } from "effect";
 import { Command, Flag } from "effect/cli";
+
 import { GRANULARITIES, Groq, MODELS, RESPONSE_FORMATS } from "../groq.ts";
 import { JsonText } from "../json.ts";
 import { emitJson, jsonFlag, wrapPayload } from "../output.ts";

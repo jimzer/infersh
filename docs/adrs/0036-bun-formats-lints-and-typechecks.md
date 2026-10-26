@@ -32,9 +32,10 @@ Biome, `biome.json` and the `tsc` step removed.**
 
 - `just lint` formats, then lints with `--fix --max-warnings 0`: the repo
   has no warnings, so a new one fails rather than piling up.
-- Markdown is not formatted. `bun fmt` would reformat every doc: tables padded
-  to their widest cell (the skill's area table becomes far wider than a screen), and a
-  wrapped list line moved to column 0. Biome never touched Markdown either.
+- Markdown is not formatted. `bun fmt` would reformat every doc: tables
+  padded to their widest cell (the skill's area table becomes far wider than
+  a screen), and a wrapped list line moved to column 0. Biome never touched
+  Markdown either.
 - Suppressions are ESLint comments with the reason after `--`, as Biome's
   carried one after `:`.
 - `typescript` stays a peer dependency only so editors run the TypeScript

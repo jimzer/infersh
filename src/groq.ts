@@ -9,6 +9,7 @@
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
+
 import {
 	Console,
 	Context,
@@ -20,6 +21,7 @@ import {
 } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
+
 import { formatBytes } from "./output.ts";
 import { lazyKey, MissingKeyError, type Secrets } from "./secrets.ts";
 import { run } from "./stage.ts";

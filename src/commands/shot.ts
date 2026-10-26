@@ -3,8 +3,10 @@
  */
 
 import { resolve } from "node:path";
+
 import { Console, Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
+
 import { emitJson, jsonFlag } from "../output.ts";
 import { Render, RenderError, WAIT_EVENTS } from "../render.ts";
 

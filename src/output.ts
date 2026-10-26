@@ -8,6 +8,7 @@
  */
 
 import { format } from "node:util";
+
 import { Console, type Effect } from "effect";
 import { Flag } from "effect/cli";
 

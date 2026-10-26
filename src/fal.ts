@@ -8,10 +8,12 @@
 
 import { mkdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+
 import { createFalClient, type FalClient } from "@fal-ai/client";
 import { dereference } from "@readme/openapi-parser";
 import { Console, Context, Data, Effect, Layer, Option, Schema } from "effect";
 import { HttpClient } from "effect/http";
+
 import { JsonObject, lenient } from "./json.ts";
 import { lazyKey, MissingKeyError, type Secrets } from "./secrets.ts";
 

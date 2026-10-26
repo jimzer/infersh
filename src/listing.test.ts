@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+
 import { Option } from "effect";
+
 import {
 	CHATGPT_ANSWER,
 	compactRecords,

@@ -7,6 +7,7 @@
  */
 
 import { join } from "node:path";
+
 import {
 	Clock,
 	Console,
@@ -16,6 +17,7 @@ import {
 	Schema,
 } from "effect";
 import type { HttpClient } from "effect/http";
+
 import { cacheDir, readFile, writeFile } from "./stage.ts";
 import {
 	installPath,

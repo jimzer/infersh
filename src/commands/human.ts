@@ -3,8 +3,10 @@
  */
 
 import { basename, dirname, resolve } from "node:path";
+
 import { Console, Effect, FileSystem, Option, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
+
 // The built-in page, embedded as text and served as an inline source: Bun
 // inlines the characters without following its imports, so React stays out
 // of the CLI. Being text for the whole build, it must never be imported
@@ -12,22 +14,22 @@ import { Argument, Command, Flag } from "effect/cli";
 // @ts-expect-error text import: Bun inlines the file contents as a string
 import pageSource from "../human/page.tsx" with { type: "text" };
 import {
-	DownloadAnswer,
 	defaultUploadDir,
+	DownloadAnswer,
 	FIELD_TYPES,
 	type Item,
-	type PresetData,
 	parseAccept,
 	parseFormFields,
 	parseSize,
+	type PresetData,
 	toItems,
 	UploadAnswer,
 	zipNameFor,
 } from "../human/presets.ts";
 import { JsonText } from "../json.ts";
 import { emitJson, jsonFlag } from "../output.ts";
-import { Ui, UiError, type UiRequest, type UiResult } from "../ui.ts";
 import type { OfferedFile } from "../ui-download.ts";
+import { Ui, UiError, type UiRequest, type UiResult } from "../ui.ts";
 
 const PAGE_SOURCE: string = pageSource;
 

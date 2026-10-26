@@ -3,8 +3,10 @@
  */
 
 import { readFileSync } from "node:fs";
+
 import { Console, Effect, Option, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
+
 import { JsonText } from "../json.ts";
 import {
 	formatContext,

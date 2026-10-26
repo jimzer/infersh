@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { PLAYWRIGHT_VERSION } from "./render.ts";
+
 import {
 	ASSET_ORIGIN,
 	assetPathFor,
 	buildHtml,
 	formatFromPath,
 } from "./render-shared.ts";
+import { PLAYWRIGHT_VERSION } from "./render.ts";
 
 describe("formatFromPath", () => {
 	test("maps the extension to a Playwright image type", () => {

@@ -1,6 +1,8 @@
 import { afterAll, describe, expect, test } from "bun:test";
+
 import { Duration, Effect } from "effect";
 import { HttpClient } from "effect/http";
+
 import { layerWithTimeout, REQUEST_TIMEOUT } from "./http.ts";
 
 describe("the shared HTTP client", () => {

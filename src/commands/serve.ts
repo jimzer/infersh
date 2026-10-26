@@ -4,6 +4,7 @@
 
 import { Console, Duration, Effect, Option, Redacted } from "effect";
 import { Command, Flag } from "effect/cli";
+
 import { serve } from "../serve.ts";
 import { newToken } from "../ui.ts";
 

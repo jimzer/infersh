@@ -3,8 +3,10 @@
  */
 
 import { join, resolve } from "node:path";
+
 import { Console, Duration, Effect, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
+
 import { dryRun, EachError, type OutputLine, runEach } from "../each.ts";
 import { emitJson } from "../output.ts";
 import { cacheDir } from "../stage.ts";

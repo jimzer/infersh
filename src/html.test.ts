@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { escapeForScript, escapeText, inlineScript } from "./html.ts";
 
 describe("escapeForScript", () => {

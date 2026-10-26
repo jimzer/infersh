@@ -10,7 +10,9 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
+
 import { Option, Schema } from "effect";
+
 import { JsonObject } from "../json.ts";
 import { dataUri } from "../render-html.ts";
 

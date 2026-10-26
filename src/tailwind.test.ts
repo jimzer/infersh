@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import {
 	TAILWIND_NAME,
 	TAILWIND_PACKAGE,
